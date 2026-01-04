@@ -29,7 +29,8 @@ class OESAnalyzer(QMainWindow):
         """초기화"""
         super().__init__()
         self.setWindowTitle("플라즈마 OES 데이터 분석기")
-        self.setFixedSize(1200, 600)
+        self.setMinimumSize(800, 400)  # 최소 크기 설정
+        self.resize(1200, 600)  # 초기 크기 (고정 아님)
 
         # 데이터 변수 초기화
         self.data = None  # 로드된 데이터프레임
@@ -46,8 +47,8 @@ class OESAnalyzer(QMainWindow):
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
         # ===== 좌측 컨트롤 패널 =====
         left_panel = QWidget()
@@ -90,7 +91,8 @@ class OESAnalyzer(QMainWindow):
             spinbox.setSingleStep(0.5)
             spinbox.setDecimals(1)
             spinbox.setValue(default_wl)
-            spinbox.valueChanged.connect(self.on_wavelength_changed)
+            spinbox.setKeyboardTracking(False)
+            spinbox.editingFinished.connect(self.on_wavelength_changed)
 
             # CheckBox
             checkbox = QCheckBox()
@@ -117,7 +119,8 @@ class OESAnalyzer(QMainWindow):
         self.time_spinbox.setSingleStep(0.5)
         self.time_spinbox.setDecimals(2)
         self.time_spinbox.setEnabled(False)
-        self.time_spinbox.valueChanged.connect(self.on_time_changed)
+        self.time_spinbox.setKeyboardTracking(False)
+        self.time_spinbox.editingFinished.connect(self.on_time_changed)
         left_layout.addWidget(self.time_spinbox)
 
         # 4. Reference Time 입력 필드
@@ -130,7 +133,8 @@ class OESAnalyzer(QMainWindow):
         self.reference_spinbox.setSingleStep(0.5)
         self.reference_spinbox.setDecimals(2)
         self.reference_spinbox.setEnabled(False)
-        self.reference_spinbox.valueChanged.connect(self.on_reference_changed)
+        self.reference_spinbox.setKeyboardTracking(False)
+        self.reference_spinbox.editingFinished.connect(self.on_reference_changed)
         left_layout.addWidget(self.reference_spinbox)
 
         left_layout.addStretch()
@@ -138,30 +142,28 @@ class OESAnalyzer(QMainWindow):
         # ===== 우측 그래프 영역 =====
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(10, 10, 10, 10)
+        right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(10)
 
         # 그래프 A: 스펙트럼 뷰어
-        self.figure_a = Figure(figsize=(8, 2.2), dpi=100)
+        self.figure_a = Figure()
+        self.figure_a.set_constrained_layout(True)
         self.canvas_a = FigureCanvas(self.figure_a)
         self.ax_spectrum = self.figure_a.add_subplot(111)
-        self.canvas_a.setFixedSize(800, 220)
-        right_layout.addWidget(self.canvas_a)
+        right_layout.addWidget(self.canvas_a, stretch=1)
 
         # 그래프 B: 시계열 뷰어
-        self.figure_b = Figure(figsize=(8, 2.2), dpi=100)
+        self.figure_b = Figure()
+        self.figure_b.set_constrained_layout(True)
         self.canvas_b = FigureCanvas(self.figure_b)
         self.ax_timeseries = self.figure_b.add_subplot(111)
-        self.canvas_b.setFixedSize(800, 220)
         # 클릭 이벤트 연결
         self.canvas_b.mpl_connect('button_press_event', self.on_graph_click)
-        right_layout.addWidget(self.canvas_b)
-
-        right_layout.addStretch()
+        right_layout.addWidget(self.canvas_b, stretch=1)
 
         # 메인 레이아웃에 패널 추가
         main_layout.addWidget(left_panel)
-        main_layout.addWidget(right_panel)
+        main_layout.addWidget(right_panel, stretch=1)
 
         # 초기 상태 그래프 표시
         self.show_empty_graphs()
@@ -338,6 +340,34 @@ class OESAnalyzer(QMainWindow):
                     wavelengths.append(wl)
         return wavelengths
 
+    def calculate_correlation_single_wavelength(self, ref_spectrum, current_spectrum, wavelength):
+        """
+        단일 파장 기준 ±10nm 범위의 Pearson Correlation 계산
+
+        Parameters:
+        - ref_spectrum: Reference 시점 스펙트럼 (1201 포인트)
+        - current_spectrum: 현재 시점 스펙트럼 (1201 포인트)
+        - wavelength: 기준 파장 (nm)
+
+        Returns:
+        - r: Pearson correlation coefficient (-1 ~ 1)
+        """
+        center_idx = int((wavelength - 200.0) / 0.5)
+
+        # ±10nm = ±20 인덱스
+        start_idx = max(0, center_idx - 20)
+        end_idx = min(1200, center_idx + 20)
+
+        x = np.array(ref_spectrum[start_idx:end_idx + 1])
+        y = np.array(current_spectrum[start_idx:end_idx + 1])
+
+        # Pearson correlation
+        x_mean, y_mean = np.mean(x), np.mean(y)
+        numerator = np.sum((x - x_mean) * (y - y_mean))
+        denominator = np.sqrt(np.sum((x - x_mean)**2) * np.sum((y - y_mean)**2))
+
+        return numerator / denominator if denominator != 0 else 0.0
+
     def update_spectrum_graph(self):
         """그래프 A 업데이트: 스펙트럼 뷰어"""
         if self.data is None:
@@ -390,6 +420,10 @@ class OESAnalyzer(QMainWindow):
         run_times = self.data.iloc[:, 1].values
         selected_wavelengths = self.get_selected_wavelengths()
 
+        # Reference 및 현재 스펙트럼 가져오기
+        ref_spectrum = self.get_spectrum_at_time(self.reference_time)
+        current_spectrum = self.get_spectrum_at_time(self.current_time)
+
         # 파장별 시계열 데이터 플롯 (좌측 Y축)
         colors = ['tab:blue', 'tab:orange', 'tab:green']
         for i, wl in enumerate(selected_wavelengths):
@@ -406,6 +440,28 @@ class OESAnalyzer(QMainWindow):
                 color=color, linewidth=1.5
             )
 
+            # 각 파장별 Correlation Score 계산 및 표시
+            if ref_spectrum is not None and current_spectrum is not None:
+                r_value = self.calculate_correlation_single_wavelength(
+                    ref_spectrum, current_spectrum, wl
+                )
+
+                # 현재 시점에서의 Intensity 값 (Y 좌표)
+                current_intensity = self.get_intensity_at_wavelength(current_spectrum, wl)
+
+                # Current Time 수직선과 파장 라인 교차점에 Correlation Score 표시
+                self.ax_timeseries.annotate(
+                    f'r={r_value:.3f}',
+                    xy=(self.current_time, current_intensity),
+                    xytext=(5, 5 + i * 15),  # 파장별로 Y 오프셋 적용하여 겹침 방지
+                    textcoords='offset points',
+                    fontsize=10,
+                    fontweight='bold',
+                    color=color,
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
+                              edgecolor=color, alpha=0.8)
+                )
+
         # 현재 시간 수직선 (빨간색 점선)
         self.ax_timeseries.axvline(
             self.current_time,
@@ -420,28 +476,6 @@ class OESAnalyzer(QMainWindow):
             alpha=0.5, label='Reference Time'
         )
 
-        # Correlation Score 계산 및 표시
-        if len(selected_wavelengths) > 0:
-            ref_spectrum = self.get_spectrum_at_time(self.reference_time)
-            current_spectrum = self.get_spectrum_at_time(self.current_time)
-
-            if ref_spectrum is not None and current_spectrum is not None:
-                correlation = self.calculate_correlation(
-                    ref_spectrum, current_spectrum, selected_wavelengths
-                )
-
-                # Reference 수직선 상단에 텍스트 표시
-                ylim = self.ax_timeseries.get_ylim()
-                y_pos = ylim[1] * 0.95
-
-                self.ax_timeseries.text(
-                    self.reference_time, y_pos,
-                    f"r = {correlation:.4f}",
-                    fontsize=10, color='#555555',
-                    ha='center', va='top',
-                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8)
-                )
-
         # 축 설정
         self.ax_timeseries.set_xlabel("Run Time (sec)")
         self.ax_timeseries.set_ylabel("Intensity (a.u.)")
@@ -455,14 +489,20 @@ class OESAnalyzer(QMainWindow):
 
         self.canvas_b.draw()
 
-    def on_time_changed(self, value):
-        """시간 SpinBox 변경 핸들러"""
+    def on_time_changed(self):
+        """시간 SpinBox Enter 입력 핸들러"""
+        if self.data is None:
+            return
+        value = self.time_spinbox.value()
         self.current_time = value
         self.update_spectrum_graph()
         self.update_timeseries_graph()
 
-    def on_reference_changed(self, value):
-        """Reference Time 변경 핸들러"""
+    def on_reference_changed(self):
+        """Reference Time SpinBox Enter 입력 핸들러"""
+        if self.data is None:
+            return
+        value = self.reference_spinbox.value()
         self.reference_time = value
         self.update_timeseries_graph()
 
