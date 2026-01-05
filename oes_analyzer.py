@@ -88,7 +88,7 @@ class CorrelationDetailWindow(QWidget):
         main_layout.addWidget(right_panel, stretch=1)
 
     def update_content(self, parent):
-        """내용 업데이트 - 부모 창에서 데이터 직접 접근"""
+        """내용 업데이트 - 부모 창에서 데이터 직접 접근 (개선된 탭 구조)"""
         if parent.data is None:
             return
 
@@ -123,19 +123,113 @@ class CorrelationDetailWindow(QWidget):
         # 우측 그래프 초기화
         self.ax.clear()
 
+        # ===== 탭 1: Overview (공식 + 설정 + 전체 요약) =====
+        overview_tab = QWidget()
+        overview_layout = QVBoxLayout(overview_tab)
+        overview_layout.setContentsMargins(10, 10, 10, 10)
+
+        # 스크롤 영역
+        overview_scroll = QScrollArea()
+        overview_scroll.setWidgetResizable(True)
+        overview_content = QWidget()
+        overview_scroll_layout = QVBoxLayout(overview_content)
+
+        # 공식 표시용 Figure
+        formula_fig = Figure(figsize=(5, 4))
+        formula_canvas = FigureCanvas(formula_fig)
+        formula_ax = formula_fig.add_subplot(111)
+        formula_ax.axis('off')
+
+        # 공식 텍스트
+        formula_text = (
+            r"$\mathbf{Pearson\ Correlation\ Coefficient}$" + "\n\n"
+            r"$r = \frac{\sum_{i=1}^{n}(x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum_{i=1}^{n}(x_i - \bar{x})^2 \cdot \sum_{i=1}^{n}(y_i - \bar{y})^2}}$" + "\n\n"
+            r"$\mathbf{Variables:}$" + "\n"
+            r"$x_i$ = Reference spectrum intensity" + "\n"
+            r"$y_i$ = Current spectrum intensity" + "\n"
+            r"$\bar{x}$ = Mean of reference" + "\n"
+            r"$\bar{y}$ = Mean of current" + "\n"
+            r"$n$ = Number of data points in range"
+        )
+
+        formula_ax.text(0.05, 0.95, formula_text,
+                       transform=formula_ax.transAxes,
+                       fontsize=11,
+                       verticalalignment='top',
+                       fontfamily='monospace')
+
+        formula_fig.tight_layout()
+        overview_scroll_layout.addWidget(formula_canvas)
+
+        # 현재 설정 표시
+        settings_fig = Figure(figsize=(5, 2))
+        settings_canvas = FigureCanvas(settings_fig)
+        settings_ax = settings_fig.add_subplot(111)
+        settings_ax.axis('off')
+
+        wavelengths_str = ", ".join([f"{wl:.1f} nm" for wl in wavelengths_info])
+        settings_text = (
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            r"$\mathbf{Current\ Settings}$" + "\n\n"
+            f"Reference Time: {reference_time:.2f} s\n"
+            f"Current Time: {current_time:.2f} s\n"
+            f"Selected Wavelengths: {wavelengths_str}\n"
+            f"Correlation Range: ±10 nm per wavelength"
+        )
+
+        settings_ax.text(0.05, 0.95, settings_text,
+                        transform=settings_ax.transAxes,
+                        fontsize=10,
+                        verticalalignment='top',
+                        fontfamily='monospace')
+
+        settings_fig.tight_layout()
+        overview_scroll_layout.addWidget(settings_canvas)
+
+        # 전체 파장 Correlation Score 요약
+        summary_fig = Figure(figsize=(5, 2 + len(wavelengths_info) * 0.4))
+        summary_canvas = FigureCanvas(summary_fig)
+        summary_ax = summary_fig.add_subplot(111)
+        summary_ax.axis('off')
+
+        summary_text = (
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            r"$\mathbf{Correlation\ Scores\ Summary}$" + "\n\n"
+        )
+
+        # 각 파장별 Correlation Score 계산 및 추가
+        for i, wl in enumerate(wavelengths_info):
+            center_idx = int((wl - 200.0) / 0.5)
+            start_idx = max(0, center_idx - 20)
+            end_idx = min(len(ref_spectrum) - 1, center_idx + 20)
+
+            x = ref_spectrum[start_idx:end_idx + 1]
+            y = current_spectrum[start_idx:end_idx + 1]
+
+            x_mean = np.mean(x)
+            y_mean = np.mean(y)
+            numerator = np.sum((x - x_mean) * (y - y_mean))
+            denominator = np.sqrt(np.sum((x - x_mean)**2) * np.sum((y - y_mean)**2))
+            r_value = numerator / denominator if denominator != 0 else 0.0
+
+            summary_text += f"λ = {wl:.1f} nm: r = {r_value:.6f}\n"
+
+        summary_ax.text(0.05, 0.95, summary_text,
+                       transform=summary_ax.transAxes,
+                       fontsize=10,
+                       verticalalignment='top',
+                       fontfamily='monospace')
+
+        summary_fig.tight_layout()
+        overview_scroll_layout.addWidget(summary_canvas)
+
+        overview_scroll.setWidget(overview_content)
+        overview_layout.addWidget(overview_scroll)
+        self.tab_widget.addTab(overview_tab, "Overview")
+
+        # ===== 탭 2~N: 각 파장별 상세 정보 =====
         for i, wl in enumerate(wavelengths_info):
             line_color = colors[i % len(colors)]
-
-            # ===== 탭 생성 (각 파장별) =====
-            tab = QWidget()
-            tab_layout = QVBoxLayout(tab)
-            tab_layout.setContentsMargins(10, 10, 10, 10)
-
-            # 스크롤 영역
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll_content = QWidget()
-            scroll_layout = QVBoxLayout(scroll_content)
 
             # ±10nm 범위 인덱스 계산
             center_idx = int((wl - 200.0) / 0.5)
@@ -147,51 +241,75 @@ class CorrelationDetailWindow(QWidget):
 
             # 통계값 계산
             x_mean = np.mean(x)
+            x_std = np.std(x)
+            x_min = np.min(x)
+            x_max = np.max(x)
+
             y_mean = np.mean(y)
+            y_std = np.std(y)
+            y_min = np.min(y)
+            y_max = np.max(y)
+
             numerator = np.sum((x - x_mean) * (y - y_mean))
             denom_x = np.sum((x - x_mean)**2)
             denom_y = np.sum((y - y_mean)**2)
             denominator = np.sqrt(denom_x * denom_y)
             r_value = numerator / denominator if denominator != 0 else 0.0
 
-            # 공식 표시용 Figure
-            formula_fig = Figure(figsize=(5, 6))
-            formula_canvas = FigureCanvas(formula_fig)
-            formula_ax = formula_fig.add_subplot(111)
-            formula_ax.axis('off')
+            # 탭 생성
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+            tab_layout.setContentsMargins(10, 10, 10, 10)
 
-            # 공식 텍스트 (mathtext 사용, raw string)
-            formula_text = (
-                r"$\mathbf{Pearson\ Correlation\ Coefficient}$" + "\n\n"
-                r"$r = \frac{\sum_{i=1}^{n}(x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum_{i=1}^{n}(x_i - \bar{x})^2 \cdot \sum_{i=1}^{n}(y_i - \bar{y})^2}}$" + "\n\n"
-                r"$\mathbf{Variables:}$" + "\n"
-                r"$x_i$ = Reference spectrum intensity" + "\n"
-                r"$y_i$ = Current spectrum intensity" + "\n"
-                r"$\bar{x}$ = Mean of reference" + "\n"
-                r"$\bar{y}$ = Mean of current" + "\n\n"
+            # 스크롤 영역
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll_content = QWidget()
+            scroll_layout = QVBoxLayout(scroll_content)
+
+            # 파장 정보 Figure
+            detail_fig = Figure(figsize=(5, 6))
+            detail_canvas = FigureCanvas(detail_fig)
+            detail_ax = detail_fig.add_subplot(111)
+            detail_ax.axis('off')
+
+            # 상세 정보 텍스트 (공식 없이 통계만)
+            detail_text = (
+                r"$\mathbf{Wavelength:\ " + f"{wl:.1f}" + r"\ nm}$" + "\n"
+                f"Range: {wl-10:.1f} - {wl+10:.1f} nm (±10 nm)\n"
+                f"Data Points: {len(x)}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                r"$\mathbf{Calculation\ for\ \lambda = " + f"{wl:.1f}" + r"\ nm}$" + "\n"
-                f"(Range: {wl-10:.1f} - {wl+10:.1f} nm)\n\n"
-                f"Reference Time: {reference_time:.2f} s\n"
-                f"Current Time: {current_time:.2f} s\n\n"
-                r"$\bar{x}_{ref}$ = " + f"{x_mean:.2f}\n"
-                r"$\bar{y}_{current}$ = " + f"{y_mean:.2f}\n\n"
-                r"$\sum(x_i - \bar{x})(y_i - \bar{y})$ = " + f"{numerator:.2f}\n\n"
-                r"$\sqrt{\sum(x_i - \bar{x})^2}$ = " + f"{np.sqrt(denom_x):.2f}\n"
-                r"$\sqrt{\sum(y_i - \bar{y})^2}$ = " + f"{np.sqrt(denom_y):.2f}\n\n"
+                r"$\mathbf{Reference\ Spectrum\ Statistics}$" + "\n"
+                f"Time: {reference_time:.2f} s\n\n"
+                f"Mean:    {x_mean:.4f}\n"
+                f"Std Dev: {x_std:.4f}\n"
+                f"Min:     {x_min:.4f}\n"
+                f"Max:     {x_max:.4f}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                r"$r = \frac{" + f"{numerator:.2f}" + r"}{" + f"{np.sqrt(denom_x):.2f}" + r" \times " + f"{np.sqrt(denom_y):.2f}" + r"}$" + "\n\n"
+                r"$\mathbf{Current\ Spectrum\ Statistics}$" + "\n"
+                f"Time: {current_time:.2f} s\n\n"
+                f"Mean:    {y_mean:.4f}\n"
+                f"Std Dev: {y_std:.4f}\n"
+                f"Min:     {y_min:.4f}\n"
+                f"Max:     {y_max:.4f}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                r"$\mathbf{Correlation\ Calculation}$" + "\n\n"
+                r"$\sum(x_i - \bar{x})(y_i - \bar{y})$ = " + f"{numerator:.4f}\n\n"
+                r"$\sqrt{\sum(x_i - \bar{x})^2}$ = " + f"{np.sqrt(denom_x):.4f}\n"
+                r"$\sqrt{\sum(y_i - \bar{y})^2}$ = " + f"{np.sqrt(denom_y):.4f}\n\n"
+                r"$r = \frac{" + f"{numerator:.4f}" + r"}{" +
+                f"{np.sqrt(denom_x):.4f}" + r" \times " + f"{np.sqrt(denom_y):.4f}" + r"}$" + "\n\n"
                 r"$\mathbf{r = " + f"{r_value:.6f}" + r"}$"
             )
 
-            formula_ax.text(0.05, 0.95, formula_text,
-                           transform=formula_ax.transAxes,
-                           fontsize=10,
-                           verticalalignment='top',
-                           fontfamily='monospace')
+            detail_ax.text(0.05, 0.95, detail_text,
+                          transform=detail_ax.transAxes,
+                          fontsize=10,
+                          verticalalignment='top',
+                          fontfamily='monospace')
 
-            formula_fig.tight_layout()
-            scroll_layout.addWidget(formula_canvas)
+            detail_fig.tight_layout()
+            scroll_layout.addWidget(detail_canvas)
             scroll.setWidget(scroll_content)
             tab_layout.addWidget(scroll)
 
@@ -249,11 +367,6 @@ class OESAnalyzer(QMainWindow):
         self.wavelengths_data = None  # 파장 배열 (200.0 ~ 800.0)
         self.reference_time = None  # Reference 시간
         self.current_time = None  # 현재 선택된 시간
-
-        # 드래그 상태 관리
-        self.dragging_line = None  # 'current' 또는 'reference' 또는 None
-        self.current_vline = None  # Current Time 수직선 객체
-        self.reference_vline = None  # Reference Time 수직선 객체
 
         # Detail Window
         self.detail_window = None
@@ -390,9 +503,6 @@ class OESAnalyzer(QMainWindow):
         # 메인 레이아웃에 패널 추가
         main_layout.addWidget(left_panel)
         main_layout.addWidget(right_panel, stretch=1)
-
-        # 드래그 이벤트 설정
-        self.setup_drag_events()
 
         # 초기 상태 그래프 표시
         self.show_empty_graphs()
@@ -760,110 +870,40 @@ class OESAnalyzer(QMainWindow):
         self.update_detail_window()
 
     def on_graph_click(self, event):
-        """그래프 클릭 이벤트 핸들러"""
+        """그래프 클릭 이벤트 핸들러 (클릭 기반 시간 선택)"""
+        # 데이터 검증
+        if self.data is None:
+            return
         if event.inaxes != self.ax_timeseries:
             return
-
         if event.xdata is None:
             return
 
         clicked_time = event.xdata
 
+        # 유효한 시간 범위로 클램프
+        times = self.data.iloc[:, 1].values
+        clamped_time = float(np.clip(clicked_time, times.min(), times.max()))
+
         # Shift+클릭: Reference Time 설정
         if event.key == 'shift':
-            self.reference_spinbox.setValue(clicked_time)
+            self.reference_spinbox.blockSignals(True)
+            self.reference_spinbox.setValue(clamped_time)
+            self.reference_spinbox.blockSignals(False)
+            # 즉시 업데이트
+            self.reference_time = clamped_time
+            self.update_timeseries_graph()
+            self.update_detail_window()
         else:
             # 일반 클릭: 현재 시간 설정
-            self.time_spinbox.setValue(clicked_time)
-
-    def setup_drag_events(self):
-        """창2 그래프에 드래그 이벤트 연결"""
-        # 기존 이벤트 연결 제거 후 재연결
-        self.canvas_b.mpl_connect('button_press_event', self.on_drag_press)
-        self.canvas_b.mpl_connect('button_release_event', self.on_drag_release)
-        self.canvas_b.mpl_connect('motion_notify_event', self.on_drag_motion)
-
-        # 드래그 상태 초기화
-        self.dragging_line = None
-
-    def on_drag_press(self, event):
-        """마우스 버튼 누름 - 드래그 시작"""
-        if event.inaxes != self.ax_timeseries:
-            return
-        if self.data is None:
-            return
-        if event.xdata is None:
-            return
-
-        # 현재 수직선 위치
-        current_time = self.time_spinbox.value()
-        ref_time = self.reference_spinbox.value()
-
-        # X축 범위 기준 허용 오차 계산 (전체 범위의 2%)
-        x_min, x_max = self.ax_timeseries.get_xlim()
-        tolerance = (x_max - x_min) * 0.02
-
-        # 어떤 수직선을 클릭했는지 판단
-        if abs(event.xdata - current_time) < tolerance:
-            self.dragging_line = 'current'
-        elif abs(event.xdata - ref_time) < tolerance:
-            self.dragging_line = 'reference'
-        else:
-            self.dragging_line = None
-
-    def on_drag_release(self, event):
-        """마우스 버튼 릴리즈 - 드래그 종료"""
-        if self.dragging_line is None:
-            return
-        if event.xdata is None:
-            self.dragging_line = None
-            return
-
-        # 데이터 범위 내로 클램프
-        times = self.data.iloc[:, 1].values
-        new_time = float(np.clip(event.xdata, times.min(), times.max()))
-
-        # SpinBox 업데이트 (블로킹 시그널로 무한루프 방지)
-        if self.dragging_line == 'current':
             self.time_spinbox.blockSignals(True)
-            self.time_spinbox.setValue(new_time)
+            self.time_spinbox.setValue(clamped_time)
             self.time_spinbox.blockSignals(False)
-            self.on_time_changed()
-        elif self.dragging_line == 'reference':
-            self.reference_spinbox.blockSignals(True)
-            self.reference_spinbox.setValue(new_time)
-            self.reference_spinbox.blockSignals(False)
-            self.on_reference_changed()
-
-        self.dragging_line = None
-        # 커서 복원
-        QApplication.restoreOverrideCursor()
-
-    def on_drag_motion(self, event):
-        """마우스 이동 - 커서 변경"""
-        if self.data is None:
-            return
-
-        # 드래그 중이 아닐 때만 커서 변경 로직 실행
-        if self.dragging_line is not None:
-            return
-
-        # axes 밖이면 기본 커서
-        if event.inaxes != self.ax_timeseries or event.xdata is None:
-            QApplication.restoreOverrideCursor()
-            return
-
-        current_time = self.time_spinbox.value()
-        ref_time = self.reference_spinbox.value()
-
-        x_min, x_max = self.ax_timeseries.get_xlim()
-        tolerance = (x_max - x_min) * 0.02
-
-        # 수직선 근처면 좌우 화살표 커서
-        if abs(event.xdata - current_time) < tolerance or abs(event.xdata - ref_time) < tolerance:
-            QApplication.setOverrideCursor(QCursor(Qt.SizeHorCursor))
-        else:
-            QApplication.restoreOverrideCursor()
+            # 즉시 업데이트
+            self.current_time = clamped_time
+            self.update_spectrum_graph()
+            self.update_timeseries_graph()
+            self.update_detail_window()
 
     def find_nearest_time_index(self, time_value):
         """주어진 시간에 가장 가까운 인덱스 반환"""
