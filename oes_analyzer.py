@@ -166,6 +166,10 @@ class CorrelationDetailWindow(QWidget):
         current_time = parent.time_spinbox.value()
         reference_time = parent.reference_spinbox.value()
 
+        # Correlation Window 값 가져오기
+        correlation_window = parent.correlation_window
+        half_window = correlation_window / 2.0
+
         # 가장 가까운 시간 인덱스 찾기
         current_idx = int(np.argmin(np.abs(times - current_time)))
         ref_idx = int(np.argmin(np.abs(times - reference_time)))
@@ -177,28 +181,33 @@ class CorrelationDetailWindow(QWidget):
         colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
         # ========================================
-        # 탭 1: Overview (공식 + 요약 정보) - 폰트 8pt
+        # 탭 1: Overview (공식 + 요약 정보)
         # ========================================
         overview_tab = QWidget()
         overview_layout = QVBoxLayout(overview_tab)
-        overview_layout.setContentsMargins(10, 10, 10, 10)
+        overview_layout.setContentsMargins(5, 5, 5, 5)
 
+        # 스크롤 영역 추가 (개선)
         overview_scroll = QScrollArea()
         overview_scroll.setWidgetResizable(True)
+        overview_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        overview_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
         overview_content = QWidget()
         overview_scroll_layout = QVBoxLayout(overview_content)
+        overview_scroll_layout.setContentsMargins(5, 5, 5, 5)
 
-        overview_fig = Figure(figsize=(5, 8))
+        # Figure 크기 증가 (스크롤 가능하도록)
+        overview_fig = Figure(figsize=(6, 10))
         overview_canvas = FigureCanvas(overview_fig)
+        overview_canvas.setMinimumSize(400, 600)  # 최소 크기 설정
         overview_ax = overview_fig.add_subplot(111)
         overview_ax.axis('off')
 
         # 각 파장별 Correlation Score 계산
         wavelength_results = []
         for wl in wavelengths_info:
-            center_idx = int((wl - 200.0) / 0.5)
-            start_idx = max(0, center_idx - 20)
-            end_idx = min(len(ref_spectrum) - 1, center_idx + 20)
+            start_idx, end_idx = parent.get_window_indices(wl)
 
             x = ref_spectrum[start_idx:end_idx + 1]
             y = current_spectrum[start_idx:end_idx + 1]
@@ -222,21 +231,22 @@ class CorrelationDetailWindow(QWidget):
             r"$y_i$ = Current spectrum intensity at index $i$" + "\n"
             r"$\bar{x}$ = Mean of reference spectrum" + "\n"
             r"$\bar{y}$ = Mean of current spectrum" + "\n"
-            r"$n$ = Number of data points in $\pm$10nm range" + "\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"$n$ = Number of data points in ±{half_window:.1f}nm range" + "\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             r"$\mathbf{Current\ Settings}$" + "\n\n"
             f"  Reference Time: {reference_time:.2f} sec\n"
             f"  Current Time: {current_time:.2f} sec\n"
+            f"  Correlation Window: {correlation_window:.1f} nm (±{half_window:.1f} nm)\n"
             f"  Selected Wavelengths: {', '.join([f'{wl:.1f}' for wl in wavelengths_info])} nm\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             r"$\mathbf{Correlation\ Score\ Summary}$" + "\n\n"
         )
         for result in wavelength_results:
             overview_text += f"  λ = {result['wl']:.1f} nm:  r = {result['r']:.6f}\n"
 
-        overview_ax.text(0.05, 0.95, overview_text,
+        overview_ax.text(0.02, 0.98, overview_text,
                         transform=overview_ax.transAxes,
-                        fontsize=8,  # 8pt로 변경
+                        fontsize=8,
                         verticalalignment='top',
                         fontfamily='monospace')
 
@@ -248,7 +258,7 @@ class CorrelationDetailWindow(QWidget):
         self.tab_widget.addTab(overview_tab, "Overview")
 
         # ========================================
-        # 탭 2+: 각 파장별 상세 계산 과정 (Collapsible)
+        # 탭 2+: 각 파장별 상세 계산 과정
         # ========================================
         self.ax.clear()
 
@@ -258,20 +268,21 @@ class CorrelationDetailWindow(QWidget):
             # 파장별 탭 생성
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)
-            tab_layout.setContentsMargins(5, 5, 5, 5)
+            tab_layout.setContentsMargins(3, 3, 3, 3)
 
-            # 스크롤 영역
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            # 메인 스크롤 영역 (개선)
+            main_scroll = QScrollArea()
+            main_scroll.setWidgetResizable(True)
+            main_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            main_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+
             scroll_content = QWidget()
             scroll_layout = QVBoxLayout(scroll_content)
-            scroll_layout.setSpacing(5)
+            scroll_layout.setSpacing(8)
+            scroll_layout.setContentsMargins(5, 5, 5, 5)
 
-            # ±10nm 범위 계산
-            center_idx = int((wl - 200.0) / 0.5)
-            start_idx = max(0, center_idx - 20)
-            end_idx = min(len(ref_spectrum) - 1, center_idx + 20)
+            # 동적 Window 범위 계산
+            start_idx, end_idx = parent.get_window_indices(wl)
 
             # 파장 배열 생성
             wavelength_range = np.arange(200.0 + start_idx * 0.5, 200.0 + (end_idx + 1) * 0.5, 0.5)
@@ -303,48 +314,64 @@ class CorrelationDetailWindow(QWidget):
 
             # ===== 헤더 정보 =====
             header_label = QLabel(
-                f"<b>λ = {wl:.1f} nm</b> (Range: {wl-10:.1f} - {wl+10:.1f} nm)<br>"
+                f"<b>λ = {wl:.1f} nm</b> (Range: {wl-half_window:.1f} - {wl+half_window:.1f} nm)<br>"
                 f"Reference Time: {reference_time:.2f} sec | Current Time: {current_time:.2f} sec<br>"
-                f"Data Points: {n}"
+                f"Correlation Window: {correlation_window:.1f} nm | Data Points: {n}"
             )
             header_label.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 5px;")
+            header_label.setWordWrap(True)
             scroll_layout.addWidget(header_label)
 
-            # ===== 섹션 1: 데이터 테이블 (Collapsible) =====
+            # ===== 섹션 1: 데이터 테이블 (Collapsible + 스크롤) =====
             data_section = CollapsibleSection()
             data_section.set_title(f"Raw Data Table ({n} points)")
 
-            # 데이터 테이블 Figure
-            table_fig = Figure(figsize=(6, max(4, n * 0.15)))
+            # 데이터 테이블용 스크롤 영역
+            table_scroll = QScrollArea()
+            table_scroll.setWidgetResizable(True)
+            table_scroll.setMinimumHeight(300)
+            table_scroll.setMaximumHeight(400)
+
+            # 데이터 테이블 Figure (동적 크기)
+            table_height = max(5, n * 0.18)
+            table_fig = Figure(figsize=(7, table_height))
             table_canvas = FigureCanvas(table_fig)
+            table_canvas.setMinimumSize(500, int(table_height * 50))
             table_ax = table_fig.add_subplot(111)
             table_ax.axis('off')
 
             # 테이블 텍스트 생성
             table_header = f"{'Idx':>4} | {'λ (nm)':>8} | {'xi (Ref)':>12} | {'yi (Cur)':>12} | {'xi-x̄':>10} | {'yi-ȳ':>10} | {'(xi-x̄)(yi-ȳ)':>14}\n"
-            table_header += "-" * 90 + "\n"
+            table_header += "─" * 95 + "\n"
 
             table_rows = ""
             for j in range(n):
-                wl_j = wavelength_range[j] if j < len(wavelength_range) else wl - 10 + j * 0.5
+                wl_j = wavelength_range[j] if j < len(wavelength_range) else wl - half_window + j * 0.5
                 table_rows += f"{j:>4} | {wl_j:>8.1f} | {x[j]:>12.2f} | {y[j]:>12.2f} | {x_diff[j]:>10.2f} | {y_diff[j]:>10.2f} | {xy_product[j]:>14.2f}\n"
 
-            table_ax.text(0.02, 0.98, table_header + table_rows,
+            table_ax.text(0.01, 0.99, table_header + table_rows,
                          transform=table_ax.transAxes,
                          fontsize=7,
                          verticalalignment='top',
                          fontfamily='monospace')
 
             table_fig.tight_layout()
-            data_section.add_widget(table_canvas)
+            table_scroll.setWidget(table_canvas)
+            data_section.add_widget(table_scroll)
             scroll_layout.addWidget(data_section)
 
-            # ===== 섹션 2: 통계 요약 (Collapsible) =====
+            # ===== 섹션 2: 통계 요약 (Collapsible + 스크롤) =====
             stats_section = CollapsibleSection()
             stats_section.set_title("Statistics Summary")
 
-            stats_fig = Figure(figsize=(5, 3))
+            stats_scroll = QScrollArea()
+            stats_scroll.setWidgetResizable(True)
+            stats_scroll.setMinimumHeight(150)
+            stats_scroll.setMaximumHeight(250)
+
+            stats_fig = Figure(figsize=(6, 4))
             stats_canvas = FigureCanvas(stats_fig)
+            stats_canvas.setMinimumSize(400, 200)
             stats_ax = stats_fig.add_subplot(111)
             stats_ax.axis('off')
 
@@ -363,69 +390,77 @@ class CorrelationDetailWindow(QWidget):
                 f"  Max:   {np.max(y):.2f}\n"
             )
 
-            stats_ax.text(0.05, 0.95, stats_text,
+            stats_ax.text(0.02, 0.95, stats_text,
                          transform=stats_ax.transAxes,
                          fontsize=9,
                          verticalalignment='top',
                          fontfamily='monospace')
 
             stats_fig.tight_layout()
-            stats_section.add_widget(stats_canvas)
+            stats_scroll.setWidget(stats_canvas)
+            stats_section.add_widget(stats_scroll)
             scroll_layout.addWidget(stats_section)
 
-            # ===== 섹션 3: 계산 과정 (Collapsible) =====
+            # ===== 섹션 3: 계산 과정 (Collapsible + 스크롤) =====
             calc_section = CollapsibleSection()
             calc_section.set_title("Calculation Steps")
 
-            calc_fig = Figure(figsize=(5, 5))
+            calc_scroll = QScrollArea()
+            calc_scroll.setWidgetResizable(True)
+            calc_scroll.setMinimumHeight(200)
+            calc_scroll.setMaximumHeight(350)
+
+            calc_fig = Figure(figsize=(6, 6))
             calc_canvas = FigureCanvas(calc_fig)
+            calc_canvas.setMinimumSize(400, 350)
             calc_ax = calc_fig.add_subplot(111)
             calc_ax.axis('off')
 
             calc_text = (
                 "Step 1: Calculate Means\n"
-                "─────────────────────────────────────────\n"
+                "─────────────────────────────────────────────\n"
                 f"  x̄ = Σxi / n = {np.sum(x):.2f} / {n} = {x_mean:.4f}\n"
                 f"  ȳ = Σyi / n = {np.sum(y):.2f} / {n} = {y_mean:.4f}\n\n"
 
                 "Step 2: Calculate Deviations\n"
-                "─────────────────────────────────────────\n"
+                "─────────────────────────────────────────────\n"
                 f"  (xi - x̄): range [{np.min(x_diff):.2f}, {np.max(x_diff):.2f}]\n"
                 f"  (yi - ȳ): range [{np.min(y_diff):.2f}, {np.max(y_diff):.2f}]\n\n"
 
                 "Step 3: Calculate Sum of Squared Deviations\n"
-                "─────────────────────────────────────────\n"
+                "─────────────────────────────────────────────\n"
                 f"  Σ(xi - x̄)² = {sum_x_sq:.4f}\n"
                 f"  Σ(yi - ȳ)² = {sum_y_sq:.4f}\n\n"
 
                 "Step 4: Calculate Covariance (numerator)\n"
-                "─────────────────────────────────────────\n"
+                "─────────────────────────────────────────────\n"
                 f"  Σ(xi - x̄)(yi - ȳ) = {sum_xy:.4f}\n\n"
 
                 "Step 5: Calculate Denominator\n"
-                "─────────────────────────────────────────\n"
+                "─────────────────────────────────────────────\n"
                 f"  √[Σ(xi - x̄)² × Σ(yi - ȳ)²]\n"
                 f"  = √[{sum_x_sq:.4f} × {sum_y_sq:.4f}]\n"
                 f"  = √[{sum_x_sq * sum_y_sq:.4f}]\n"
                 f"  = {denominator:.4f}\n\n"
 
                 "Step 6: Final Calculation\n"
-                "─────────────────────────────────────────\n"
+                "─────────────────────────────────────────────\n"
                 f"  r = {sum_xy:.4f} / {denominator:.4f}\n"
                 f"  r = {r_value:.6f}\n"
             )
 
-            calc_ax.text(0.05, 0.95, calc_text,
+            calc_ax.text(0.02, 0.98, calc_text,
                         transform=calc_ax.transAxes,
                         fontsize=9,
                         verticalalignment='top',
                         fontfamily='monospace')
 
             calc_fig.tight_layout()
-            calc_section.add_widget(calc_canvas)
+            calc_scroll.setWidget(calc_canvas)
+            calc_section.add_widget(calc_scroll)
             scroll_layout.addWidget(calc_section)
 
-            # ===== 섹션 4: 최종 결과 (항상 펼침) =====
+            # ===== 섹션 4: 최종 결과 =====
             result_label = QLabel(
                 f"<div style='padding: 15px; background-color: #e8f4e8; border: 2px solid #4CAF50; border-radius: 5px;'>"
                 f"<h3 style='color: #2E7D32; margin: 0;'>Correlation Score (r) = {r_value:.6f}</h3>"
@@ -434,8 +469,9 @@ class CorrelationDetailWindow(QWidget):
             scroll_layout.addWidget(result_label)
 
             scroll_layout.addStretch()
-            scroll.setWidget(scroll_content)
-            tab_layout.addWidget(scroll)
+            scroll_content.setMinimumWidth(450)
+            main_scroll.setWidget(scroll_content)
+            tab_layout.addWidget(main_scroll)
 
             self.tab_widget.addTab(tab, f"λ={wl:.1f}nm")
 
@@ -464,7 +500,7 @@ class CorrelationDetailWindow(QWidget):
         self.ax.set_xlabel("Run Time (sec)")
         self.ax.set_ylabel("Correlation Score")
         self.ax.set_ylim(-1.0, 1.0)
-        self.ax.set_title("Correlation Score Time Series")
+        self.ax.set_title(f"Correlation Score (Window: {correlation_window:.1f}nm)")
         self.ax.legend(loc='upper right', fontsize=8)
         self.ax.grid(True, linestyle='--', alpha=0.3)
 
@@ -491,6 +527,7 @@ class OESAnalyzer(QMainWindow):
         self.wavelengths_data = None  # 파장 배열 (200.0 ~ 800.0)
         self.reference_time = None  # Reference 시간
         self.current_time = None  # 현재 선택된 시간
+        self.correlation_window = 10.0  # 기본값 10nm (±5nm)
 
         # Detail Window
         self.detail_window = None
@@ -599,6 +636,23 @@ class OESAnalyzer(QMainWindow):
         self.detail_checkbox.setStyleSheet("color: white; font-size: 11px;")
         self.detail_checkbox.stateChanged.connect(self.on_detail_checkbox_changed)
         left_layout.addWidget(self.detail_checkbox)
+
+        # 6. Correlation Window 입력 필드
+        window_label = QLabel("Correlation Window (±nm)")
+        window_label.setStyleSheet("color: white; margin-top: 15px;")
+        left_layout.addWidget(window_label)
+
+        self.window_spinbox = QDoubleSpinBox()
+        self.window_spinbox.setFixedSize(150, 30)
+        self.window_spinbox.setRange(1.0, 50.0)
+        self.window_spinbox.setSingleStep(0.5)
+        self.window_spinbox.setDecimals(1)
+        self.window_spinbox.setValue(10.0)  # 기본값 10nm
+        self.window_spinbox.setSuffix(" nm")
+        self.window_spinbox.setKeyboardTracking(False)
+        self.window_spinbox.editingFinished.connect(self.on_window_changed)
+        self.window_spinbox.setToolTip("총 범위 (예: 10nm → ±5nm)")
+        left_layout.addWidget(self.window_spinbox)
 
         left_layout.addStretch()
 
@@ -741,7 +795,7 @@ class OESAnalyzer(QMainWindow):
 
     def calculate_correlation(self, ref_spectrum, current_spectrum, wavelengths):
         """
-        선택된 파장들 주변 ±10nm 범위만 사용하여 Pearson Correlation 계산
+        선택된 파장들의 Correlation Window 범위를 사용하여 Pearson Correlation 계산
 
         Parameters:
         - ref_spectrum: Reference 시점의 전체 스펙트럼 (1201 포인트)
@@ -756,11 +810,9 @@ class OESAnalyzer(QMainWindow):
 
         indices = set()
         for wl in wavelengths:
-            center_idx = int((wl - 200.0) / 0.5)
-            # ±10nm = ±20 indices (0.5nm 간격)
-            for i in range(center_idx - 20, center_idx + 21):
-                if 0 <= i < 1201:
-                    indices.add(i)
+            start_idx, end_idx = self.get_window_indices(wl)
+            for i in range(start_idx, end_idx + 1):
+                indices.add(i)
 
         indices = sorted(list(indices))
         x = np.array([ref_spectrum[i] for i in indices])
@@ -805,7 +857,7 @@ class OESAnalyzer(QMainWindow):
 
     def calculate_correlation_single_wavelength(self, ref_spectrum, current_spectrum, wavelength):
         """
-        단일 파장 기준 ±10nm 범위의 Pearson Correlation 계산
+        단일 파장 기준 Correlation Window 범위의 Pearson Correlation 계산
 
         Parameters:
         - ref_spectrum: Reference 시점 스펙트럼 (1201 포인트)
@@ -815,11 +867,7 @@ class OESAnalyzer(QMainWindow):
         Returns:
         - r: Pearson correlation coefficient (-1 ~ 1)
         """
-        center_idx = int((wavelength - 200.0) / 0.5)
-
-        # ±10nm = ±20 인덱스
-        start_idx = max(0, center_idx - 20)
-        end_idx = min(1200, center_idx + 20)
+        start_idx, end_idx = self.get_window_indices(wavelength)
 
         x = np.array(ref_spectrum[start_idx:end_idx + 1])
         y = np.array(current_spectrum[start_idx:end_idx + 1])
@@ -886,6 +934,9 @@ class OESAnalyzer(QMainWindow):
         # Reference 및 현재 스펙트럼 가져오기
         ref_spectrum = self.get_spectrum_at_time(self.reference_time)
         current_spectrum = self.get_spectrum_at_time(self.current_time)
+
+        # Correlation Window 정보 (표시용)
+        half_window = self.correlation_window / 2.0
 
         # Correlation Score 텍스트 객체 리스트 (adjustText용)
         texts = []
@@ -954,7 +1005,7 @@ class OESAnalyzer(QMainWindow):
         # 축 설정
         self.ax_timeseries.set_xlabel("Run Time (sec)")
         self.ax_timeseries.set_ylabel("Intensity (a.u.)")
-        self.ax_timeseries.set_title("Time Series & Correlation")
+        self.ax_timeseries.set_title(f"Time Series & Correlation (Window: ±{half_window:.1f}nm)")
         self.ax_timeseries.grid(True, linestyle='--', alpha=0.3, color='lightgray')
         self.ax_timeseries.legend(loc='upper left')
 
@@ -992,6 +1043,38 @@ class OESAnalyzer(QMainWindow):
         self.update_spectrum_graph()
         self.update_timeseries_graph()
         self.update_detail_window()
+
+    def on_window_changed(self):
+        """Correlation Window 변경 핸들러"""
+        new_window = self.window_spinbox.value()
+        self.correlation_window = new_window
+
+        # 데이터가 로드된 경우에만 업데이트
+        if self.data is not None:
+            self.update_timeseries_graph()
+            self.update_detail_window()
+
+    def get_window_indices(self, wavelength):
+        """
+        주어진 파장을 중심으로 Correlation Window 범위의 인덱스 반환
+
+        Parameters:
+        - wavelength: 중심 파장 (nm)
+
+        Returns:
+        - start_idx, end_idx: 시작/끝 인덱스
+        """
+        # 총 window nm → ±(window/2) nm
+        half_window = self.correlation_window / 2.0
+
+        center_idx = int((wavelength - 200.0) / 0.5)
+        # 0.5nm 간격이므로 half_window nm = half_window / 0.5 인덱스
+        idx_range = int(half_window / 0.5)
+
+        start_idx = max(0, center_idx - idx_range)
+        end_idx = min(1200, center_idx + idx_range)
+
+        return start_idx, end_idx
 
     def on_graph_click(self, event):
         """그래프 클릭 이벤트 핸들러 (클릭 기반 시간 선택)"""
