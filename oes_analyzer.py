@@ -258,7 +258,7 @@ class CorrelationDetailWindow(QWidget):
         self.tab_widget.addTab(overview_tab, "Overview")
 
         # ========================================
-        # 탭 2+: 각 파장별 상세 계산 과정
+        # 탭 2+: 각 파장별 상세 계산 과정 (QLabel + HTML 사용)
         # ========================================
         self.ax.clear()
 
@@ -270,7 +270,7 @@ class CorrelationDetailWindow(QWidget):
             tab_layout = QVBoxLayout(tab)
             tab_layout.setContentsMargins(3, 3, 3, 3)
 
-            # 메인 스크롤 영역 (개선)
+            # 메인 스크롤 영역
             main_scroll = QScrollArea()
             main_scroll.setWidgetResizable(True)
             main_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -309,167 +309,169 @@ class CorrelationDetailWindow(QWidget):
             sum_x_sq = np.sum(x_diff_sq)
             sum_y_sq = np.sum(y_diff_sq)
 
-            denominator = np.sqrt(sum_x_sq * sum_y_sq)
-            r_value = sum_xy / denominator if denominator != 0 else 0.0
+            denominator_val = np.sqrt(sum_x_sq * sum_y_sq)
+            r_value = sum_xy / denominator_val if denominator_val != 0 else 0.0
 
             # ===== 헤더 정보 =====
             header_label = QLabel(
-                f"<b>λ = {wl:.1f} nm</b> (Range: {wl-half_window:.1f} - {wl+half_window:.1f} nm)<br>"
+                f"<div style='padding: 10px; background-color: #f0f0f0; border-radius: 5px;'>"
+                f"<b style='font-size: 14px;'>λ = {wl:.1f} nm</b> "
+                f"(Range: {wl-half_window:.1f} - {wl+half_window:.1f} nm)<br>"
                 f"Reference Time: {reference_time:.2f} sec | Current Time: {current_time:.2f} sec<br>"
                 f"Correlation Window: {correlation_window:.1f} nm | Data Points: {n}"
+                f"</div>"
             )
-            header_label.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 5px;")
             header_label.setWordWrap(True)
             scroll_layout.addWidget(header_label)
 
-            # ===== 섹션 1: 데이터 테이블 (Collapsible + 스크롤) =====
+            # ===== 섹션 1: 데이터 테이블 (Collapsible + QLabel HTML) =====
             data_section = CollapsibleSection()
             data_section.set_title(f"Raw Data Table ({n} points)")
 
-            # 데이터 테이블용 스크롤 영역
-            table_scroll = QScrollArea()
-            table_scroll.setWidgetResizable(True)
-            table_scroll.setMinimumHeight(300)
-            table_scroll.setMaximumHeight(400)
+            # HTML 테이블 생성
+            table_html = """
+            <div style='font-family: monospace; font-size: 9px; padding: 5px;'>
+            <table border='1' cellpadding='4' cellspacing='0' style='border-collapse: collapse; width: 100%;'>
+            <tr style='background-color: #4472C4; color: white;'>
+                <th>Idx</th><th>λ (nm)</th><th>xi (Ref)</th><th>yi (Cur)</th>
+                <th>xi-x̄</th><th>yi-ȳ</th><th>(xi-x̄)(yi-ȳ)</th>
+            </tr>
+            """
 
-            # 데이터 테이블 Figure (동적 크기)
-            table_height = max(5, n * 0.18)
-            table_fig = Figure(figsize=(7, table_height))
-            table_canvas = FigureCanvas(table_fig)
-            table_canvas.setMinimumSize(500, int(table_height * 50))
-            table_ax = table_fig.add_subplot(111)
-            table_ax.axis('off')
-
-            # 테이블 텍스트 생성
-            table_header = f"{'Idx':>4} | {'λ (nm)':>8} | {'xi (Ref)':>12} | {'yi (Cur)':>12} | {'xi-x̄':>10} | {'yi-ȳ':>10} | {'(xi-x̄)(yi-ȳ)':>14}\n"
-            table_header += "─" * 95 + "\n"
-
-            table_rows = ""
             for j in range(n):
                 wl_j = wavelength_range[j] if j < len(wavelength_range) else wl - half_window + j * 0.5
-                table_rows += f"{j:>4} | {wl_j:>8.1f} | {x[j]:>12.2f} | {y[j]:>12.2f} | {x_diff[j]:>10.2f} | {y_diff[j]:>10.2f} | {xy_product[j]:>14.2f}\n"
+                bg_color = '#f9f9f9' if j % 2 == 0 else '#ffffff'
+                table_html += f"""
+                <tr style='background-color: {bg_color};'>
+                    <td align='center'>{j}</td>
+                    <td align='right'>{wl_j:.1f}</td>
+                    <td align='right'>{x[j]:.2f}</td>
+                    <td align='right'>{y[j]:.2f}</td>
+                    <td align='right'>{x_diff[j]:.2f}</td>
+                    <td align='right'>{y_diff[j]:.2f}</td>
+                    <td align='right'>{xy_product[j]:.2f}</td>
+                </tr>
+                """
 
-            table_ax.text(0.01, 0.99, table_header + table_rows,
-                         transform=table_ax.transAxes,
-                         fontsize=7,
-                         verticalalignment='top',
-                         fontfamily='monospace')
+            table_html += "</table></div>"
 
-            table_fig.tight_layout()
-            table_scroll.setWidget(table_canvas)
+            table_label = QLabel(table_html)
+            table_label.setWordWrap(True)
+            table_label.setTextFormat(Qt.RichText)
+
+            # 테이블용 스크롤 영역
+            table_scroll = QScrollArea()
+            table_scroll.setWidgetResizable(True)
+            table_scroll.setMinimumHeight(200)
+            table_scroll.setMaximumHeight(350)
+            table_scroll.setWidget(table_label)
+
             data_section.add_widget(table_scroll)
             scroll_layout.addWidget(data_section)
 
-            # ===== 섹션 2: 통계 요약 (Collapsible + 스크롤) =====
+            # ===== 섹션 2: 통계 요약 (Collapsible + QLabel HTML) =====
             stats_section = CollapsibleSection()
             stats_section.set_title("Statistics Summary")
 
-            stats_scroll = QScrollArea()
-            stats_scroll.setWidgetResizable(True)
-            stats_scroll.setMinimumHeight(150)
-            stats_scroll.setMaximumHeight(250)
+            stats_html = f"""
+            <div style='font-family: monospace; font-size: 11px; padding: 10px; background-color: #fafafa; border-radius: 5px;'>
+            <b style='color: #4472C4;'>Reference Spectrum (xi):</b><br>
+            &nbsp;&nbsp;Sum: Σxi = {np.sum(x):.2f}<br>
+            &nbsp;&nbsp;Mean: x̄ = Σxi/n = {np.sum(x):.2f}/{n} = <b>{x_mean:.4f}</b><br>
+            &nbsp;&nbsp;Std: σx = {x_std:.4f}<br>
+            &nbsp;&nbsp;Min: {np.min(x):.2f}<br>
+            &nbsp;&nbsp;Max: {np.max(x):.2f}<br><br>
 
-            stats_fig = Figure(figsize=(6, 4))
-            stats_canvas = FigureCanvas(stats_fig)
-            stats_canvas.setMinimumSize(400, 200)
-            stats_ax = stats_fig.add_subplot(111)
-            stats_ax.axis('off')
+            <b style='color: #4472C4;'>Current Spectrum (yi):</b><br>
+            &nbsp;&nbsp;Sum: Σyi = {np.sum(y):.2f}<br>
+            &nbsp;&nbsp;Mean: ȳ = Σyi/n = {np.sum(y):.2f}/{n} = <b>{y_mean:.4f}</b><br>
+            &nbsp;&nbsp;Std: σy = {y_std:.4f}<br>
+            &nbsp;&nbsp;Min: {np.min(y):.2f}<br>
+            &nbsp;&nbsp;Max: {np.max(y):.2f}<br>
+            </div>
+            """
 
-            stats_text = (
-                f"Reference Spectrum (xi):\n"
-                f"  Sum:   Σxi = {np.sum(x):.2f}\n"
-                f"  Mean:  x̄ = Σxi/n = {np.sum(x):.2f}/{n} = {x_mean:.4f}\n"
-                f"  Std:   σx = {x_std:.4f}\n"
-                f"  Min:   {np.min(x):.2f}\n"
-                f"  Max:   {np.max(x):.2f}\n\n"
-                f"Current Spectrum (yi):\n"
-                f"  Sum:   Σyi = {np.sum(y):.2f}\n"
-                f"  Mean:  ȳ = Σyi/n = {np.sum(y):.2f}/{n} = {y_mean:.4f}\n"
-                f"  Std:   σy = {y_std:.4f}\n"
-                f"  Min:   {np.min(y):.2f}\n"
-                f"  Max:   {np.max(y):.2f}\n"
-            )
+            stats_label = QLabel(stats_html)
+            stats_label.setWordWrap(True)
+            stats_label.setTextFormat(Qt.RichText)
 
-            stats_ax.text(0.02, 0.95, stats_text,
-                         transform=stats_ax.transAxes,
-                         fontsize=9,
-                         verticalalignment='top',
-                         fontfamily='monospace')
+            data_section2 = QWidget()
+            data_section2_layout = QVBoxLayout(data_section2)
+            data_section2_layout.setContentsMargins(0, 0, 0, 0)
+            data_section2_layout.addWidget(stats_label)
 
-            stats_fig.tight_layout()
-            stats_scroll.setWidget(stats_canvas)
-            stats_section.add_widget(stats_scroll)
+            stats_section.add_widget(data_section2)
             scroll_layout.addWidget(stats_section)
 
-            # ===== 섹션 3: 계산 과정 (Collapsible + 스크롤) =====
+            # ===== 섹션 3: 계산 과정 (Collapsible + QLabel HTML) =====
             calc_section = CollapsibleSection()
             calc_section.set_title("Calculation Steps")
 
-            calc_scroll = QScrollArea()
-            calc_scroll.setWidgetResizable(True)
-            calc_scroll.setMinimumHeight(200)
-            calc_scroll.setMaximumHeight(350)
+            calc_html = f"""
+            <div style='font-family: monospace; font-size: 11px; padding: 10px; background-color: #fafafa; border-radius: 5px;'>
 
-            calc_fig = Figure(figsize=(6, 6))
-            calc_canvas = FigureCanvas(calc_fig)
-            calc_canvas.setMinimumSize(400, 350)
-            calc_ax = calc_fig.add_subplot(111)
-            calc_ax.axis('off')
+            <b style='color: #2E7D32;'>Step 1: Calculate Means</b><br>
+            <hr style='border: 1px solid #ddd;'>
+            &nbsp;&nbsp;x̄ = Σxi / n = {np.sum(x):.2f} / {n} = <b>{x_mean:.4f}</b><br>
+            &nbsp;&nbsp;ȳ = Σyi / n = {np.sum(y):.2f} / {n} = <b>{y_mean:.4f}</b><br><br>
 
-            calc_text = (
-                "Step 1: Calculate Means\n"
-                "─────────────────────────────────────────────\n"
-                f"  x̄ = Σxi / n = {np.sum(x):.2f} / {n} = {x_mean:.4f}\n"
-                f"  ȳ = Σyi / n = {np.sum(y):.2f} / {n} = {y_mean:.4f}\n\n"
+            <b style='color: #2E7D32;'>Step 2: Calculate Deviations</b><br>
+            <hr style='border: 1px solid #ddd;'>
+            &nbsp;&nbsp;(xi - x̄): range [{np.min(x_diff):.2f}, {np.max(x_diff):.2f}]<br>
+            &nbsp;&nbsp;(yi - ȳ): range [{np.min(y_diff):.2f}, {np.max(y_diff):.2f}]<br><br>
 
-                "Step 2: Calculate Deviations\n"
-                "─────────────────────────────────────────────\n"
-                f"  (xi - x̄): range [{np.min(x_diff):.2f}, {np.max(x_diff):.2f}]\n"
-                f"  (yi - ȳ): range [{np.min(y_diff):.2f}, {np.max(y_diff):.2f}]\n\n"
+            <b style='color: #2E7D32;'>Step 3: Calculate Sum of Squared Deviations</b><br>
+            <hr style='border: 1px solid #ddd;'>
+            &nbsp;&nbsp;Σ(xi - x̄)² = <b>{sum_x_sq:.4f}</b><br>
+            &nbsp;&nbsp;Σ(yi - ȳ)² = <b>{sum_y_sq:.4f}</b><br><br>
 
-                "Step 3: Calculate Sum of Squared Deviations\n"
-                "─────────────────────────────────────────────\n"
-                f"  Σ(xi - x̄)² = {sum_x_sq:.4f}\n"
-                f"  Σ(yi - ȳ)² = {sum_y_sq:.4f}\n\n"
+            <b style='color: #2E7D32;'>Step 4: Calculate Covariance (numerator)</b><br>
+            <hr style='border: 1px solid #ddd;'>
+            &nbsp;&nbsp;Σ(xi - x̄)(yi - ȳ) = <b>{sum_xy:.4f}</b><br><br>
 
-                "Step 4: Calculate Covariance (numerator)\n"
-                "─────────────────────────────────────────────\n"
-                f"  Σ(xi - x̄)(yi - ȳ) = {sum_xy:.4f}\n\n"
+            <b style='color: #2E7D32;'>Step 5: Calculate Denominator</b><br>
+            <hr style='border: 1px solid #ddd;'>
+            &nbsp;&nbsp;√[Σ(xi - x̄)² × Σ(yi - ȳ)²]<br>
+            &nbsp;&nbsp;= √[{sum_x_sq:.4f} × {sum_y_sq:.4f}]<br>
+            &nbsp;&nbsp;= √[{sum_x_sq * sum_y_sq:.4f}]<br>
+            &nbsp;&nbsp;= <b>{denominator_val:.4f}</b><br><br>
 
-                "Step 5: Calculate Denominator\n"
-                "─────────────────────────────────────────────\n"
-                f"  √[Σ(xi - x̄)² × Σ(yi - ȳ)²]\n"
-                f"  = √[{sum_x_sq:.4f} × {sum_y_sq:.4f}]\n"
-                f"  = √[{sum_x_sq * sum_y_sq:.4f}]\n"
-                f"  = {denominator:.4f}\n\n"
+            <b style='color: #2E7D32;'>Step 6: Final Calculation</b><br>
+            <hr style='border: 1px solid #ddd;'>
+            &nbsp;&nbsp;r = Σ(xi - x̄)(yi - ȳ) / √[Σ(xi - x̄)² × Σ(yi - ȳ)²]<br>
+            &nbsp;&nbsp;r = {sum_xy:.4f} / {denominator_val:.4f}<br>
+            &nbsp;&nbsp;<span style='font-size: 14px; color: #1565C0;'><b>r = {r_value:.6f}</b></span><br>
 
-                "Step 6: Final Calculation\n"
-                "─────────────────────────────────────────────\n"
-                f"  r = {sum_xy:.4f} / {denominator:.4f}\n"
-                f"  r = {r_value:.6f}\n"
-            )
+            </div>
+            """
 
-            calc_ax.text(0.02, 0.98, calc_text,
-                        transform=calc_ax.transAxes,
-                        fontsize=9,
-                        verticalalignment='top',
-                        fontfamily='monospace')
+            calc_label = QLabel(calc_html)
+            calc_label.setWordWrap(True)
+            calc_label.setTextFormat(Qt.RichText)
 
-            calc_fig.tight_layout()
-            calc_scroll.setWidget(calc_canvas)
-            calc_section.add_widget(calc_scroll)
+            calc_widget = QWidget()
+            calc_widget_layout = QVBoxLayout(calc_widget)
+            calc_widget_layout.setContentsMargins(0, 0, 0, 0)
+            calc_widget_layout.addWidget(calc_label)
+
+            calc_section.add_widget(calc_widget)
             scroll_layout.addWidget(calc_section)
 
-            # ===== 섹션 4: 최종 결과 =====
+            # ===== 섹션 4: 최종 결과 (항상 표시) =====
             result_label = QLabel(
-                f"<div style='padding: 15px; background-color: #e8f4e8; border: 2px solid #4CAF50; border-radius: 5px;'>"
-                f"<h3 style='color: #2E7D32; margin: 0;'>Correlation Score (r) = {r_value:.6f}</h3>"
+                f"<div style='padding: 15px; background-color: #e8f4e8; border: 2px solid #4CAF50; border-radius: 5px; margin-top: 10px;'>"
+                f"<span style='font-size: 16px; color: #2E7D32; font-weight: bold;'>"
+                f"Correlation Score (r) = {r_value:.6f}</span>"
                 f"</div>"
             )
+            result_label.setTextFormat(Qt.RichText)
             scroll_layout.addWidget(result_label)
 
+            # 하단 여백 추가
             scroll_layout.addStretch()
-            scroll_content.setMinimumWidth(450)
+
+            # 스크롤 영역에 컨텐츠 설정
+            scroll_content.setLayout(scroll_layout)
             main_scroll.setWidget(scroll_content)
             tab_layout.addWidget(main_scroll)
 
@@ -489,6 +491,7 @@ class CorrelationDetailWindow(QWidget):
 
             self.ax.plot(times, r_values, color=line_color,
                         linewidth=1.5, label=f'{wl:.1f} nm')
+
 
         # 수직선 (Current Time, Reference Time)
         self.ax.axvline(x=current_time, color='#FF0000',
