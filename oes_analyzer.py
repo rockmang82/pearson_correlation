@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QDoubleSpinBox, QCheckBox,
     QLabel, QFileDialog, QMessageBox, QTabWidget, QScrollArea,
-    QGroupBox, QSizePolicy, QFrame
+    QGroupBox, QSizePolicy, QFrame, QSlider
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPalette, QColor, QCursor
@@ -515,6 +515,278 @@ class CorrelationDetailWindow(QWidget):
         event.accept()
 
 
+class FullSpectrumDetailWindow(QWidget):
+    """창4: Full Spectrum Correlation 상세 정보 팝업"""
+
+    closed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Window)
+        self.parent_window = parent
+        self.init_ui()
+
+    def init_ui(self):
+        """GUI 초기화"""
+        self.setWindowTitle("Full Spectrum Correlation Detail")
+        self.setMinimumSize(500, 400)
+        self.resize(600, 500)
+
+        # 메인 레이아웃
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+
+        # 탭 위젯
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #ccc; background: white; }
+            QTabBar::tab { padding: 8px 16px; }
+            QTabBar::tab:selected { background: #4472C4; color: white; }
+        """)
+        main_layout.addWidget(self.tab_widget)
+
+    def update_content(self, parent):
+        """내용 업데이트"""
+        if parent.data is None:
+            return
+
+        self.tab_widget.clear()
+
+        times = parent.data.iloc[:, 1].values
+        current_time = parent.time_spinbox.value()
+        reference_time = parent.reference_spinbox.value()
+
+        current_idx = int(np.argmin(np.abs(times - current_time)))
+        ref_idx = int(np.argmin(np.abs(times - reference_time)))
+
+        ref_spectrum = parent.data.iloc[ref_idx, 2:].values.astype(float)
+        current_spectrum = parent.data.iloc[current_idx, 2:].values.astype(float)
+
+        n = len(ref_spectrum)  # 1201
+
+        # 통계 계산
+        x = ref_spectrum
+        y = current_spectrum
+        x_mean = np.mean(x)
+        y_mean = np.mean(y)
+        x_std = np.std(x)
+        y_std = np.std(y)
+
+        x_diff = x - x_mean
+        y_diff = y - y_mean
+        xy_product = x_diff * y_diff
+
+        sum_xy = np.sum(xy_product)
+        sum_x_sq = np.sum(x_diff ** 2)
+        sum_y_sq = np.sum(y_diff ** 2)
+
+        denominator_val = np.sqrt(sum_x_sq * sum_y_sq)
+        r_value = sum_xy / denominator_val if denominator_val != 0 else 0.0
+
+        # ========================================
+        # 탭 1: Formula & Parameters
+        # ========================================
+        formula_tab = QWidget()
+        formula_layout = QVBoxLayout(formula_tab)
+        formula_layout.setContentsMargins(10, 10, 10, 10)
+
+        formula_scroll = QScrollArea()
+        formula_scroll.setWidgetResizable(True)
+        formula_content = QWidget()
+        formula_scroll_layout = QVBoxLayout(formula_content)
+
+        formula_html = f"""
+        <div style='font-family: Arial; font-size: 11px; padding: 10px;'>
+
+        <h2 style='color: #4472C4;'>Full Spectrum Pearson Correlation Coefficient</h2>
+
+        <div style='background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0;'>
+        <p style='font-size: 14px; text-align: center;'>
+        <b>r = Σ(xᵢ - x̄)(yᵢ - ȳ) / √[Σ(xᵢ - x̄)² × Σ(yᵢ - ȳ)²]</b>
+        </p>
+        </div>
+
+        <h3 style='color: #2E7D32;'>Parameters</h3>
+        <hr>
+
+        <table style='width: 100%; border-collapse: collapse;'>
+        <tr style='background-color: #e3f2fd;'>
+            <td style='padding: 8px; border: 1px solid #ddd;'><b>Symbol</b></td>
+            <td style='padding: 8px; border: 1px solid #ddd;'><b>Name</b></td>
+            <td style='padding: 8px; border: 1px solid #ddd;'><b>Description</b></td>
+        </tr>
+        <tr>
+            <td style='padding: 8px; border: 1px solid #ddd;'>xᵢ</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Reference Spectrum Intensity</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Reference 시점의 파장별 발광 강도 (i = 1 to 1201)</td>
+        </tr>
+        <tr style='background-color: #f9f9f9;'>
+            <td style='padding: 8px; border: 1px solid #ddd;'>yᵢ</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Current Spectrum Intensity</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>현재 시점의 파장별 발광 강도 (i = 1 to 1201)</td>
+        </tr>
+        <tr>
+            <td style='padding: 8px; border: 1px solid #ddd;'>x̄</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Reference Mean</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Reference 스펙트럼의 평균값</td>
+        </tr>
+        <tr style='background-color: #f9f9f9;'>
+            <td style='padding: 8px; border: 1px solid #ddd;'>ȳ</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Current Mean</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>현재 스펙트럼의 평균값</td>
+        </tr>
+        <tr>
+            <td style='padding: 8px; border: 1px solid #ddd;'>n</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Number of Data Points</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>전체 스펙트럼 데이터 포인트 수 (1201개, 200-800nm)</td>
+        </tr>
+        <tr style='background-color: #f9f9f9;'>
+            <td style='padding: 8px; border: 1px solid #ddd;'>r</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Correlation Coefficient</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>상관계수 (-1 ≤ r ≤ 1)</td>
+        </tr>
+        </table>
+
+        <h3 style='color: #2E7D32; margin-top: 20px;'>Interpretation</h3>
+        <hr>
+        <ul>
+            <li><b>r = 1</b>: 완벽한 양의 상관관계 (동일한 스펙트럼)</li>
+            <li><b>r = 0</b>: 상관관계 없음</li>
+            <li><b>r = -1</b>: 완벽한 음의 상관관계</li>
+        </ul>
+
+        <h3 style='color: #2E7D32; margin-top: 20px;'>Current Settings</h3>
+        <hr>
+        <p>
+        <b>Reference Time:</b> {reference_time:.2f} sec<br>
+        <b>Current Time:</b> {current_time:.2f} sec<br>
+        <b>Wavelength Range:</b> 200.0 - 800.0 nm<br>
+        <b>Data Points (n):</b> {n}
+        </p>
+
+        <div style='background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin-top: 15px; border: 2px solid #4CAF50;'>
+        <p style='font-size: 16px; text-align: center; margin: 0;'>
+        <b style='color: #2E7D32;'>Current Full Spectrum r = {r_value:.6f}</b>
+        </p>
+        </div>
+
+        </div>
+        """
+
+        formula_label = QLabel(formula_html)
+        formula_label.setWordWrap(True)
+        formula_label.setTextFormat(Qt.RichText)
+        formula_scroll_layout.addWidget(formula_label)
+        formula_scroll.setWidget(formula_content)
+        formula_layout.addWidget(formula_scroll)
+
+        self.tab_widget.addTab(formula_tab, "Formula & Parameters")
+
+        # ========================================
+        # 탭 2: Calculation Details
+        # ========================================
+        calc_tab = QWidget()
+        calc_layout = QVBoxLayout(calc_tab)
+        calc_layout.setContentsMargins(10, 10, 10, 10)
+
+        calc_scroll = QScrollArea()
+        calc_scroll.setWidgetResizable(True)
+        calc_content = QWidget()
+        calc_scroll_layout = QVBoxLayout(calc_content)
+
+        calc_html = f"""
+        <div style='font-family: monospace; font-size: 11px; padding: 10px;'>
+
+        <h3 style='color: #4472C4;'>Full Spectrum Correlation Calculation</h3>
+        <p>
+        <b>Reference Time:</b> {reference_time:.2f} sec<br>
+        <b>Current Time:</b> {current_time:.2f} sec<br>
+        <b>Wavelength Range:</b> 200.0 - 800.0 nm (0.5nm interval)<br>
+        <b>Data Points:</b> n = {n}
+        </p>
+        <hr>
+
+        <h4 style='color: #2E7D32;'>Statistics Summary</h4>
+        <div style='background-color: #fafafa; padding: 10px; border-radius: 5px;'>
+        <b>Reference Spectrum (xᵢ):</b><br>
+        &nbsp;&nbsp;Sum: Σxᵢ = {np.sum(x):.2f}<br>
+        &nbsp;&nbsp;Mean: x̄ = {x_mean:.4f}<br>
+        &nbsp;&nbsp;Std Dev: σx = {x_std:.4f}<br>
+        &nbsp;&nbsp;Min: {np.min(x):.2f}<br>
+        &nbsp;&nbsp;Max: {np.max(x):.2f}<br><br>
+
+        <b>Current Spectrum (yᵢ):</b><br>
+        &nbsp;&nbsp;Sum: Σyᵢ = {np.sum(y):.2f}<br>
+        &nbsp;&nbsp;Mean: ȳ = {y_mean:.4f}<br>
+        &nbsp;&nbsp;Std Dev: σy = {y_std:.4f}<br>
+        &nbsp;&nbsp;Min: {np.min(y):.2f}<br>
+        &nbsp;&nbsp;Max: {np.max(y):.2f}<br>
+        </div>
+
+        <h4 style='color: #2E7D32; margin-top: 15px;'>Step-by-Step Calculation</h4>
+
+        <div style='background-color: #fff8e1; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 1: Calculate Means</b><br>
+        &nbsp;&nbsp;x̄ = Σxᵢ / n = {np.sum(x):.2f} / {n} = <b>{x_mean:.4f}</b><br>
+        &nbsp;&nbsp;ȳ = Σyᵢ / n = {np.sum(y):.2f} / {n} = <b>{y_mean:.4f}</b>
+        </div>
+
+        <div style='background-color: #e3f2fd; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 2: Calculate Deviations</b><br>
+        &nbsp;&nbsp;(xᵢ - x̄): range [{np.min(x_diff):.2f}, {np.max(x_diff):.2f}]<br>
+        &nbsp;&nbsp;(yᵢ - ȳ): range [{np.min(y_diff):.2f}, {np.max(y_diff):.2f}]
+        </div>
+
+        <div style='background-color: #f3e5f5; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 3: Calculate Sum of Squared Deviations</b><br>
+        &nbsp;&nbsp;Σ(xᵢ - x̄)² = <b>{sum_x_sq:.4f}</b><br>
+        &nbsp;&nbsp;Σ(yᵢ - ȳ)² = <b>{sum_y_sq:.4f}</b>
+        </div>
+
+        <div style='background-color: #e8f5e9; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 4: Calculate Covariance (Numerator)</b><br>
+        &nbsp;&nbsp;Σ(xᵢ - x̄)(yᵢ - ȳ) = <b>{sum_xy:.4f}</b>
+        </div>
+
+        <div style='background-color: #fff3e0; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 5: Calculate Denominator</b><br>
+        &nbsp;&nbsp;√[Σ(xᵢ - x̄)² × Σ(yᵢ - ȳ)²]<br>
+        &nbsp;&nbsp;= √[{sum_x_sq:.4f} × {sum_y_sq:.4f}]<br>
+        &nbsp;&nbsp;= √[{sum_x_sq * sum_y_sq:.4f}]<br>
+        &nbsp;&nbsp;= <b>{denominator_val:.4f}</b>
+        </div>
+
+        <div style='background-color: #ffebee; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 6: Final Calculation</b><br>
+        &nbsp;&nbsp;r = Σ(xᵢ - x̄)(yᵢ - ȳ) / √[Σ(xᵢ - x̄)² × Σ(yᵢ - ȳ)²]<br>
+        &nbsp;&nbsp;r = {sum_xy:.4f} / {denominator_val:.4f}<br>
+        &nbsp;&nbsp;<span style='font-size: 14px;'><b>r = {r_value:.6f}</b></span>
+        </div>
+
+        <div style='background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin-top: 15px; border: 2px solid #4CAF50;'>
+        <p style='font-size: 16px; text-align: center; margin: 0;'>
+        <b style='color: #2E7D32;'>Full Spectrum Correlation (r) = {r_value:.6f}</b>
+        </p>
+        </div>
+
+        </div>
+        """
+
+        calc_label = QLabel(calc_html)
+        calc_label.setWordWrap(True)
+        calc_label.setTextFormat(Qt.RichText)
+        calc_scroll_layout.addWidget(calc_label)
+        calc_scroll.setWidget(calc_content)
+        calc_layout.addWidget(calc_scroll)
+
+        self.tab_widget.addTab(calc_tab, "Calculation Details")
+
+    def closeEvent(self, event):
+        """창 닫힘 이벤트"""
+        self.closed.emit()
+        event.accept()
+
+
 class OESAnalyzer(QMainWindow):
     """메인 윈도우 클래스"""
 
@@ -532,8 +804,9 @@ class OESAnalyzer(QMainWindow):
         self.current_time = None  # 현재 선택된 시간
         self.correlation_window = 10.0  # 기본값 10nm (±5nm)
 
-        # Detail Window
+        # Detail Windows
         self.detail_window = None
+        self.full_spectrum_window = None
 
         # GUI 컴포넌트 초기화
         self.init_ui()
@@ -620,6 +893,13 @@ class OESAnalyzer(QMainWindow):
         self.time_spinbox.editingFinished.connect(self.on_time_changed)
         left_layout.addWidget(self.time_spinbox)
 
+        # 시간 슬라이더
+        self.time_slider = QSlider(Qt.Horizontal)
+        self.time_slider.setFixedWidth(150)
+        self.time_slider.setEnabled(False)
+        self.time_slider.valueChanged.connect(self.on_time_slider_changed)
+        left_layout.addWidget(self.time_slider)
+
         # 4. Reference Time 입력 필드
         ref_time_label = QLabel("Reference Time (sec)")
         ref_time_label.setStyleSheet("color: white;")
@@ -633,6 +913,13 @@ class OESAnalyzer(QMainWindow):
         self.reference_spinbox.setKeyboardTracking(False)
         self.reference_spinbox.editingFinished.connect(self.on_reference_changed)
         left_layout.addWidget(self.reference_spinbox)
+
+        # Reference 슬라이더
+        self.reference_slider = QSlider(Qt.Horizontal)
+        self.reference_slider.setFixedWidth(150)
+        self.reference_slider.setEnabled(False)
+        self.reference_slider.valueChanged.connect(self.on_reference_slider_changed)
+        left_layout.addWidget(self.reference_slider)
 
         # 5. Pearson Correlation Detail 체크박스
         self.detail_checkbox = QCheckBox("Pearson Correlation Detail")
@@ -657,6 +944,12 @@ class OESAnalyzer(QMainWindow):
         self.window_spinbox.setToolTip("총 범위 (예: 10nm → ±5nm)")
         left_layout.addWidget(self.window_spinbox)
 
+        # 7. Full Spectrum Correlation Detail 체크박스
+        self.full_spectrum_checkbox = QCheckBox("Full Spectrum Correlation Detail")
+        self.full_spectrum_checkbox.setStyleSheet("color: white; font-size: 11px; margin-top: 10px;")
+        self.full_spectrum_checkbox.stateChanged.connect(self.on_full_spectrum_checkbox_changed)
+        left_layout.addWidget(self.full_spectrum_checkbox)
+
         left_layout.addStretch()
 
         # ===== 우측 그래프 영역 =====
@@ -677,8 +970,6 @@ class OESAnalyzer(QMainWindow):
         self.figure_b.set_constrained_layout(True)
         self.canvas_b = FigureCanvas(self.figure_b)
         self.ax_timeseries = self.figure_b.add_subplot(111)
-        # 클릭 이벤트 연결 (기존)
-        self.canvas_b.mpl_connect('button_press_event', self.on_graph_click)
         right_layout.addWidget(self.canvas_b, stretch=1)
 
         # 메인 레이아웃에 패널 추가
@@ -761,10 +1052,20 @@ class OESAnalyzer(QMainWindow):
             self.time_spinbox.setValue(min_time)
             self.time_spinbox.setEnabled(True)
 
+            # 시간 슬라이더 설정 (0-1000 범위로 매핑)
+            self.time_slider.setRange(0, 1000)
+            self.time_slider.setValue(0)
+            self.time_slider.setEnabled(True)
+
             # Reference Time 초기화
             self.reference_spinbox.setRange(min_time, max_time)
             self.reference_spinbox.setValue(min_time)
             self.reference_spinbox.setEnabled(True)
+
+            # Reference 슬라이더 설정
+            self.reference_slider.setRange(0, 1000)
+            self.reference_slider.setValue(0)
+            self.reference_slider.setEnabled(True)
 
             self.current_time = min_time
             self.reference_time = min_time
@@ -882,6 +1183,28 @@ class OESAnalyzer(QMainWindow):
 
         return numerator / denominator if denominator != 0 else 0.0
 
+    def calculate_full_spectrum_correlation(self, ref_spectrum, current_spectrum):
+        """
+        전체 스펙트럼 (200-800nm) Pearson Correlation 계산
+
+        Parameters:
+        - ref_spectrum: Reference 시점의 전체 스펙트럼 (1201 포인트)
+        - current_spectrum: 현재 시점의 전체 스펙트럼 (1201 포인트)
+
+        Returns:
+        - r: Pearson correlation coefficient (-1 ~ 1)
+        """
+        x = np.array(ref_spectrum)
+        y = np.array(current_spectrum)
+
+        x_mean = np.mean(x)
+        y_mean = np.mean(y)
+
+        numerator = np.sum((x - x_mean) * (y - y_mean))
+        denominator = np.sqrt(np.sum((x - x_mean)**2) * np.sum((y - y_mean)**2))
+
+        return numerator / denominator if denominator != 0 else 0.0
+
     def update_spectrum_graph(self):
         """그래프 A 업데이트: 스펙트럼 뷰어"""
         if self.data is None:
@@ -981,6 +1304,27 @@ class OESAnalyzer(QMainWindow):
                 )
                 texts.append(txt)
 
+        # ===== Full Spectrum Correlation 시계열 =====
+        if ref_spectrum is not None:
+            full_spectrum_correlations = []
+
+            for t_idx in range(len(run_times)):
+                t_spectrum = self.data.iloc[t_idx, 2:].values.astype(float)
+                # 전체 스펙트럼 (200-800nm, 1201 포인트) 사용
+                r_full = self.calculate_full_spectrum_correlation(ref_spectrum, t_spectrum)
+                full_spectrum_correlations.append(r_full)
+
+            # 우측 보조축에 Full Spectrum Correlation 플롯
+            ax_corr.plot(
+                run_times, full_spectrum_correlations,
+                color='black', linewidth=2.0,
+                label='Full Spectrum r'
+            )
+
+            # 현재 시간의 Full Spectrum Correlation 값 표시
+            current_full_r = self.calculate_full_spectrum_correlation(ref_spectrum, current_spectrum)
+            ax_corr.axhline(y=current_full_r, color='black', linestyle=':', alpha=0.5)
+
         # 현재 시간 수직선 (빨간색 점선) - 객체 저장
         self.current_vline = self.ax_timeseries.axvline(
             x=self.current_time,
@@ -1012,9 +1356,10 @@ class OESAnalyzer(QMainWindow):
         self.ax_timeseries.grid(True, linestyle='--', alpha=0.3, color='lightgray')
         self.ax_timeseries.legend(loc='upper left')
 
-        # 우측 Y축 설정 (Correlation Score)
-        ax_corr.set_ylabel("Correlation Score")
+        # 우측 Y축 설정 (Full Spectrum Correlation)
+        ax_corr.set_ylabel("Full Spectrum Correlation (r)")
         ax_corr.set_ylim(-1.0, 1.0)
+        ax_corr.legend(loc='upper right')
 
         self.canvas_b.draw()
 
@@ -1024,9 +1369,19 @@ class OESAnalyzer(QMainWindow):
             return
         value = self.time_spinbox.value()
         self.current_time = value
+
+        # 슬라이더 동기화
+        times = self.data.iloc[:, 1].values
+        min_time, max_time = times.min(), times.max()
+        slider_value = int(((value - min_time) / (max_time - min_time)) * 1000)
+        self.time_slider.blockSignals(True)
+        self.time_slider.setValue(slider_value)
+        self.time_slider.blockSignals(False)
+
         self.update_spectrum_graph()
         self.update_timeseries_graph()
         self.update_detail_window()
+        self.update_full_spectrum_window()
 
     def on_reference_changed(self):
         """Reference Time SpinBox Enter 입력 핸들러"""
@@ -1034,8 +1389,60 @@ class OESAnalyzer(QMainWindow):
             return
         value = self.reference_spinbox.value()
         self.reference_time = value
+
+        # 슬라이더 동기화
+        times = self.data.iloc[:, 1].values
+        min_time, max_time = times.min(), times.max()
+        slider_value = int(((value - min_time) / (max_time - min_time)) * 1000)
+        self.reference_slider.blockSignals(True)
+        self.reference_slider.setValue(slider_value)
+        self.reference_slider.blockSignals(False)
+
         self.update_timeseries_graph()
         self.update_detail_window()
+        self.update_full_spectrum_window()
+
+    def on_time_slider_changed(self, value):
+        """시간 슬라이더 변경 핸들러"""
+        if self.data is None:
+            return
+
+        # 슬라이더 값을 실제 시간으로 변환
+        times = self.data.iloc[:, 1].values
+        min_time, max_time = times.min(), times.max()
+
+        # 0-1000 슬라이더 값을 시간 범위로 매핑
+        actual_time = min_time + (value / 1000.0) * (max_time - min_time)
+
+        # SpinBox 업데이트 (시그널 블록)
+        self.time_spinbox.blockSignals(True)
+        self.time_spinbox.setValue(actual_time)
+        self.time_spinbox.blockSignals(False)
+
+        self.current_time = actual_time
+        self.update_spectrum_graph()
+        self.update_timeseries_graph()
+        self.update_detail_window()
+        self.update_full_spectrum_window()
+
+    def on_reference_slider_changed(self, value):
+        """Reference 슬라이더 변경 핸들러"""
+        if self.data is None:
+            return
+
+        times = self.data.iloc[:, 1].values
+        min_time, max_time = times.min(), times.max()
+
+        actual_time = min_time + (value / 1000.0) * (max_time - min_time)
+
+        self.reference_spinbox.blockSignals(True)
+        self.reference_spinbox.setValue(actual_time)
+        self.reference_spinbox.blockSignals(False)
+
+        self.reference_time = actual_time
+        self.update_timeseries_graph()
+        self.update_detail_window()
+        self.update_full_spectrum_window()
 
     def on_wavelength_changed(self):
         """파장 변경 핸들러"""
@@ -1056,6 +1463,7 @@ class OESAnalyzer(QMainWindow):
         if self.data is not None:
             self.update_timeseries_graph()
             self.update_detail_window()
+            self.update_full_spectrum_window()
 
     def get_window_indices(self, wavelength):
         """
@@ -1079,41 +1487,6 @@ class OESAnalyzer(QMainWindow):
 
         return start_idx, end_idx
 
-    def on_graph_click(self, event):
-        """그래프 클릭 이벤트 핸들러 (클릭 기반 시간 선택)"""
-        # 데이터 검증
-        if self.data is None:
-            return
-        if event.inaxes != self.ax_timeseries:
-            return
-        if event.xdata is None:
-            return
-
-        clicked_time = event.xdata
-
-        # 유효한 시간 범위로 클램프
-        times = self.data.iloc[:, 1].values
-        clamped_time = float(np.clip(clicked_time, times.min(), times.max()))
-
-        # Shift+클릭: Reference Time 설정
-        if event.key == 'shift':
-            self.reference_spinbox.blockSignals(True)
-            self.reference_spinbox.setValue(clamped_time)
-            self.reference_spinbox.blockSignals(False)
-            # 즉시 업데이트
-            self.reference_time = clamped_time
-            self.update_timeseries_graph()
-            self.update_detail_window()
-        else:
-            # 일반 클릭: 현재 시간 설정
-            self.time_spinbox.blockSignals(True)
-            self.time_spinbox.setValue(clamped_time)
-            self.time_spinbox.blockSignals(False)
-            # 즉시 업데이트
-            self.current_time = clamped_time
-            self.update_spectrum_graph()
-            self.update_timeseries_graph()
-            self.update_detail_window()
 
     def find_nearest_time_index(self, time_value):
         """주어진 시간에 가장 가까운 인덱스 반환"""
@@ -1167,6 +1540,43 @@ class OESAnalyzer(QMainWindow):
 
         # 부모 객체(self)를 전달하여 데이터 접근
         self.detail_window.update_content(self)
+
+    def on_full_spectrum_checkbox_changed(self, state):
+        """Full Spectrum Correlation Detail 체크박스 상태 변경"""
+        if state == Qt.Checked:
+            self.show_full_spectrum_window()
+        else:
+            self.hide_full_spectrum_window()
+
+    def show_full_spectrum_window(self):
+        """창4 표시"""
+        if not hasattr(self, 'full_spectrum_window') or self.full_spectrum_window is None:
+            self.full_spectrum_window = FullSpectrumDetailWindow(self)
+            self.full_spectrum_window.closed.connect(self.on_full_spectrum_window_closed)
+
+        self.update_full_spectrum_window()
+        self.full_spectrum_window.show()
+        self.full_spectrum_window.raise_()
+
+    def hide_full_spectrum_window(self):
+        """창4 숨김"""
+        if hasattr(self, 'full_spectrum_window') and self.full_spectrum_window is not None:
+            self.full_spectrum_window.hide()
+
+    def on_full_spectrum_window_closed(self):
+        """창4 닫힘 시 체크박스 해제"""
+        self.full_spectrum_checkbox.setChecked(False)
+
+    def update_full_spectrum_window(self):
+        """창4 내용 업데이트"""
+        if not hasattr(self, 'full_spectrum_window') or self.full_spectrum_window is None:
+            return
+        if not self.full_spectrum_window.isVisible():
+            return
+        if self.data is None:
+            return
+
+        self.full_spectrum_window.update_content(self)
 
 
 def main():
