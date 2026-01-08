@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QDoubleSpinBox, QCheckBox,
     QLabel, QFileDialog, QMessageBox, QTabWidget, QScrollArea,
-    QGroupBox, QSizePolicy, QFrame, QSlider
+    QGroupBox, QSizePolicy, QFrame
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPalette, QColor, QCursor
@@ -893,13 +893,6 @@ class OESAnalyzer(QMainWindow):
         self.time_spinbox.editingFinished.connect(self.on_time_changed)
         left_layout.addWidget(self.time_spinbox)
 
-        # 시간 슬라이더
-        self.time_slider = QSlider(Qt.Horizontal)
-        self.time_slider.setFixedWidth(150)
-        self.time_slider.setEnabled(False)
-        self.time_slider.valueChanged.connect(self.on_time_slider_changed)
-        left_layout.addWidget(self.time_slider)
-
         # 4. Reference Time 입력 필드
         ref_time_label = QLabel("Reference Time (sec)")
         ref_time_label.setStyleSheet("color: white;")
@@ -913,13 +906,6 @@ class OESAnalyzer(QMainWindow):
         self.reference_spinbox.setKeyboardTracking(False)
         self.reference_spinbox.editingFinished.connect(self.on_reference_changed)
         left_layout.addWidget(self.reference_spinbox)
-
-        # Reference 슬라이더
-        self.reference_slider = QSlider(Qt.Horizontal)
-        self.reference_slider.setFixedWidth(150)
-        self.reference_slider.setEnabled(False)
-        self.reference_slider.valueChanged.connect(self.on_reference_slider_changed)
-        left_layout.addWidget(self.reference_slider)
 
         # 5. Pearson Correlation Detail 체크박스
         self.detail_checkbox = QCheckBox("Pearson Correlation Detail")
@@ -1047,28 +1033,28 @@ class OESAnalyzer(QMainWindow):
             min_time = run_times.min()
             max_time = run_times.max()
 
-            # 시간 SpinBox 범위 설정 및 활성화
+            # 시간 SpinBox 범위 설정
             self.time_spinbox.setRange(min_time, max_time)
-            self.time_spinbox.setValue(min_time)
+            self.reference_spinbox.setRange(min_time, max_time)
+
+            # 초기 시간 설정
+            # Current Time: 50sec (범위 초과 시 max_time 사용)
+            initial_current_time = min(50.0, max_time)
+            # Reference Time: 20sec (범위 초과 시 max_time 사용)
+            initial_reference_time = min(20.0, max_time)
+
+            # Reference가 Current보다 크면 안되므로 조정
+            if initial_reference_time > initial_current_time:
+                initial_reference_time = initial_current_time
+
+            self.time_spinbox.setValue(initial_current_time)
             self.time_spinbox.setEnabled(True)
 
-            # 시간 슬라이더 설정 (0-1000 범위로 매핑)
-            self.time_slider.setRange(0, 1000)
-            self.time_slider.setValue(0)
-            self.time_slider.setEnabled(True)
-
-            # Reference Time 초기화
-            self.reference_spinbox.setRange(min_time, max_time)
-            self.reference_spinbox.setValue(min_time)
+            self.reference_spinbox.setValue(initial_reference_time)
             self.reference_spinbox.setEnabled(True)
 
-            # Reference 슬라이더 설정
-            self.reference_slider.setRange(0, 1000)
-            self.reference_slider.setValue(0)
-            self.reference_slider.setEnabled(True)
-
-            self.current_time = min_time
-            self.reference_time = min_time
+            self.current_time = initial_current_time
+            self.reference_time = initial_reference_time
 
             # 그래프 업데이트
             self.update_spectrum_graph()
@@ -1249,9 +1235,11 @@ class OESAnalyzer(QMainWindow):
         if self.data is None:
             return
 
-        self.ax_timeseries.clear()
+        # ===== Figure 전체 초기화 (버그 수정 핵심) =====
+        self.figure_b.clear()
+        self.ax_timeseries = self.figure_b.add_subplot(111)
 
-        # 이중 Y축 생성
+        # 이중 Y축 생성 (매번 새로 생성)
         ax_corr = self.ax_timeseries.twinx()
 
         run_times = self.data.iloc[:, 1].values
@@ -1261,10 +1249,9 @@ class OESAnalyzer(QMainWindow):
         ref_spectrum = self.get_spectrum_at_time(self.reference_time)
         current_spectrum = self.get_spectrum_at_time(self.current_time)
 
-        # Correlation Window 정보 (표시용)
         half_window = self.correlation_window / 2.0
 
-        # Correlation Score 텍스트 객체 리스트 (adjustText용)
+        # Correlation Score 텍스트 객체 리스트
         texts = []
 
         # 파장별 시계열 데이터 플롯 (좌측 Y축)
@@ -1283,16 +1270,13 @@ class OESAnalyzer(QMainWindow):
                 color=color, linewidth=1.5
             )
 
-            # 각 파장별 Correlation Score 계산 및 표시
+            # 파장별 Correlation Score 텍스트 표시
             if ref_spectrum is not None and current_spectrum is not None:
                 r_value = self.calculate_correlation_single_wavelength(
                     ref_spectrum, current_spectrum, wl
                 )
-
-                # 현재 시점에서의 Intensity 값 (Y 좌표)
                 current_intensity = self.get_intensity_at_wavelength(current_spectrum, wl)
 
-                # 텍스트 객체 생성 (annotate 대신 text 사용)
                 txt = self.ax_timeseries.text(
                     self.current_time, current_intensity,
                     f'r={r_value:.3f}',
@@ -1304,42 +1288,39 @@ class OESAnalyzer(QMainWindow):
                 )
                 texts.append(txt)
 
-        # ===== Full Spectrum Correlation 시계열 =====
+        # ===== Full Spectrum Correlation 시계열 (수정됨) =====
         if ref_spectrum is not None:
             full_spectrum_correlations = []
 
             for t_idx in range(len(run_times)):
                 t_spectrum = self.data.iloc[t_idx, 2:].values.astype(float)
-                # 전체 스펙트럼 (200-800nm, 1201 포인트) 사용
                 r_full = self.calculate_full_spectrum_correlation(ref_spectrum, t_spectrum)
                 full_spectrum_correlations.append(r_full)
 
             # 우측 보조축에 Full Spectrum Correlation 플롯
+            # 색상: 연한 회색 (#AAAAAA), 굵기: 1.5pt (다른 그래프와 동일)
             ax_corr.plot(
                 run_times, full_spectrum_correlations,
-                color='black', linewidth=2.0,
+                color='#AAAAAA',  # 연한 회색
+                linewidth=1.5,    # 다른 그래프와 동일한 굵기
                 label='Full Spectrum r'
             )
 
-            # 현재 시간의 Full Spectrum Correlation 값 표시
-            current_full_r = self.calculate_full_spectrum_correlation(ref_spectrum, current_spectrum)
-            ax_corr.axhline(y=current_full_r, color='black', linestyle=':', alpha=0.5)
-
-        # 현재 시간 수직선 (빨간색 점선) - 객체 저장
-        self.current_vline = self.ax_timeseries.axvline(
+        # 현재 시간 수직선
+        self.ax_timeseries.axvline(
             x=self.current_time,
             color='#FF0000', linestyle='--', linewidth=1.5,
             label='Current Time'
         )
 
-        # Reference 시간 수직선 (회색 점선, 스타일 변경) - 객체 저장
-        self.reference_vline = self.ax_timeseries.axvline(
+        # Reference 시간 수직선
+        self.ax_timeseries.axvline(
             x=self.reference_time,
             color='#555555', linestyle='--', linewidth=1.5,
             alpha=1.0, label='Reference Time'
         )
 
-        # adjustText로 텍스트 겹침 자동 조정
+        # adjustText로 텍스트 겹침 조정
         if ADJUSTTEXT_AVAILABLE and texts:
             adjust_text(
                 texts,
@@ -1349,7 +1330,7 @@ class OESAnalyzer(QMainWindow):
                 force_points=(0.5, 0.5)
             )
 
-        # 축 설정
+        # 좌측 축 설정
         self.ax_timeseries.set_xlabel("Run Time (sec)")
         self.ax_timeseries.set_ylabel("Intensity (a.u.)")
         self.ax_timeseries.set_title(f"Time Series & Correlation (Window: ±{half_window:.1f}nm)")
@@ -1370,14 +1351,6 @@ class OESAnalyzer(QMainWindow):
         value = self.time_spinbox.value()
         self.current_time = value
 
-        # 슬라이더 동기화
-        times = self.data.iloc[:, 1].values
-        min_time, max_time = times.min(), times.max()
-        slider_value = int(((value - min_time) / (max_time - min_time)) * 1000)
-        self.time_slider.blockSignals(True)
-        self.time_slider.setValue(slider_value)
-        self.time_slider.blockSignals(False)
-
         self.update_spectrum_graph()
         self.update_timeseries_graph()
         self.update_detail_window()
@@ -1390,56 +1363,6 @@ class OESAnalyzer(QMainWindow):
         value = self.reference_spinbox.value()
         self.reference_time = value
 
-        # 슬라이더 동기화
-        times = self.data.iloc[:, 1].values
-        min_time, max_time = times.min(), times.max()
-        slider_value = int(((value - min_time) / (max_time - min_time)) * 1000)
-        self.reference_slider.blockSignals(True)
-        self.reference_slider.setValue(slider_value)
-        self.reference_slider.blockSignals(False)
-
-        self.update_timeseries_graph()
-        self.update_detail_window()
-        self.update_full_spectrum_window()
-
-    def on_time_slider_changed(self, value):
-        """시간 슬라이더 변경 핸들러"""
-        if self.data is None:
-            return
-
-        # 슬라이더 값을 실제 시간으로 변환
-        times = self.data.iloc[:, 1].values
-        min_time, max_time = times.min(), times.max()
-
-        # 0-1000 슬라이더 값을 시간 범위로 매핑
-        actual_time = min_time + (value / 1000.0) * (max_time - min_time)
-
-        # SpinBox 업데이트 (시그널 블록)
-        self.time_spinbox.blockSignals(True)
-        self.time_spinbox.setValue(actual_time)
-        self.time_spinbox.blockSignals(False)
-
-        self.current_time = actual_time
-        self.update_spectrum_graph()
-        self.update_timeseries_graph()
-        self.update_detail_window()
-        self.update_full_spectrum_window()
-
-    def on_reference_slider_changed(self, value):
-        """Reference 슬라이더 변경 핸들러"""
-        if self.data is None:
-            return
-
-        times = self.data.iloc[:, 1].values
-        min_time, max_time = times.min(), times.max()
-
-        actual_time = min_time + (value / 1000.0) * (max_time - min_time)
-
-        self.reference_spinbox.blockSignals(True)
-        self.reference_spinbox.setValue(actual_time)
-        self.reference_spinbox.blockSignals(False)
-
-        self.reference_time = actual_time
         self.update_timeseries_graph()
         self.update_detail_window()
         self.update_full_spectrum_window()
