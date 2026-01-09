@@ -15,10 +15,10 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QDoubleSpinBox, QCheckBox,
     QLabel, QFileDialog, QMessageBox, QTabWidget, QScrollArea,
-    QGroupBox, QSizePolicy, QFrame
+    QGroupBox, QSizePolicy, QFrame, QLineEdit
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QPalette, QColor, QCursor
+from PyQt5.QtGui import QPalette, QColor, QCursor, QDoubleValidator
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
@@ -808,6 +808,12 @@ class OESAnalyzer(QMainWindow):
         self.detail_window = None
         self.full_spectrum_window = None
 
+        # 줌 상태 저장 (원본 범위)
+        self.original_xlim_a = None
+        self.original_ylim_a = None
+        self.original_xlim_b = None
+        self.original_ylim_b = None
+
         # GUI 컴포넌트 초기화
         self.init_ui()
 
@@ -823,118 +829,209 @@ class OESAnalyzer(QMainWindow):
         # ===== 좌측 컨트롤 패널 =====
         left_panel = QWidget()
         left_panel.setFixedWidth(250)
-        # 배경색 설정 (#4472C4)
         palette = left_panel.palette()
         palette.setColor(QPalette.Window, QColor(68, 114, 196))
         left_panel.setAutoFillBackground(True)
         left_panel.setPalette(palette)
 
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(20, 20, 20, 20)
-        left_layout.setSpacing(15)
+        left_layout.setContentsMargins(15, 15, 15, 15)
+        left_layout.setSpacing(10)
 
-        # 1. 파일로딩 버튼
-        self.load_button = QPushButton("파일로딩")
-        self.load_button.setFixedSize(150, 40)
+        # ===== 1. 파일로딩 버튼 =====
+        self.load_button = QPushButton("Load")
+        self.load_button.setFixedSize(120, 35)
+        self.load_button.setStyleSheet("""
+            QPushButton {
+                background-color: white;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #f0f0f0;
+            }
+        """)
         self.load_button.clicked.connect(self.load_file)
-        left_layout.addWidget(self.load_button)
 
-        # 2. 파장 입력 필드 (3개)
+        # 버튼 중앙 정렬
+        load_layout = QHBoxLayout()
+        load_layout.addStretch()
+        load_layout.addWidget(self.load_button)
+        load_layout.addStretch()
+        left_layout.addLayout(load_layout)
+
+        left_layout.addSpacing(10)
+
+        # ===== 2. 파장 입력 (한 줄에 3개) =====
+        # 레이블 행 (8pt)
+        wavelength_label_layout = QHBoxLayout()
+        wavelength_label_layout.setSpacing(5)
+
+        for i in range(3):
+            lbl = QLabel(f"파장{i+1}")
+            lbl.setStyleSheet("color: white; font-size: 8pt;")
+            lbl.setAlignment(Qt.AlignCenter)
+            wavelength_label_layout.addWidget(lbl, stretch=1)
+
+        left_layout.addLayout(wavelength_label_layout)
+
+        # 입력창 행 (QLineEdit, 화살표 없음)
+        wavelength_input_layout = QHBoxLayout()
+        wavelength_input_layout.setSpacing(5)
+
         self.wavelength_inputs = []
+        default_wavelengths = [486.1, 656.3, 200.0]
+
+        for i, default_wl in enumerate(default_wavelengths):
+            line_edit = QLineEdit()
+            line_edit.setFixedHeight(28)
+            line_edit.setText(f"{default_wl:.1f}")
+            line_edit.setAlignment(Qt.AlignCenter)
+            line_edit.setStyleSheet("""
+                QLineEdit {
+                    background-color: white;
+                    border: 1px solid #ccc;
+                    border-radius: 2px;
+                    font-size: 10px;
+                }
+            """)
+            # 숫자만 입력 가능 (200.0 ~ 800.0)
+            validator = QDoubleValidator(200.0, 800.0, 1)
+            validator.setNotation(QDoubleValidator.StandardNotation)
+            line_edit.setValidator(validator)
+            line_edit.editingFinished.connect(self.on_wavelength_changed)
+
+            wavelength_input_layout.addWidget(line_edit, stretch=1)
+            self.wavelength_inputs.append(line_edit)
+
+        left_layout.addLayout(wavelength_input_layout)
+
+        # 체크박스 행
+        checkbox_layout = QHBoxLayout()
+        checkbox_layout.setSpacing(5)
+
         self.wavelength_checkboxes = []
-        default_wavelengths = [486.1, 656.3, 0.0]
+        default_checked = [True, True, False]
 
-        for i, default_wl in enumerate(default_wavelengths, 1):
-            # 레이블
-            label = QLabel(f"파장{i} (nm)")
-            label.setStyleSheet("color: white;")
-            left_layout.addWidget(label)
-
-            # 파장 입력 + 체크박스 수평 레이아웃
-            wl_layout = QHBoxLayout()
-            wl_layout.setSpacing(5)
-
-            # SpinBox
-            spinbox = QDoubleSpinBox()
-            spinbox.setFixedSize(150, 30)
-            spinbox.setRange(200.0, 800.0)
-            spinbox.setSingleStep(0.5)
-            spinbox.setDecimals(1)
-            spinbox.setValue(default_wl)
-            spinbox.setKeyboardTracking(False)
-            spinbox.editingFinished.connect(self.on_wavelength_changed)
-
-            # CheckBox
+        for i, checked in enumerate(default_checked):
             checkbox = QCheckBox()
-            checkbox.setFixedSize(20, 20)
-            checkbox.setChecked(default_wl != 0.0)  # 값이 0이 아니면 체크
+            checkbox.setChecked(checked)
+            checkbox.setStyleSheet("margin-left: 20px;")
             checkbox.stateChanged.connect(self.on_wavelength_changed)
 
-            wl_layout.addWidget(spinbox)
-            wl_layout.addWidget(checkbox)
-            wl_layout.addStretch()
+            # 체크박스 중앙 정렬용 wrapper
+            cb_wrapper = QHBoxLayout()
+            cb_wrapper.addStretch()
+            cb_wrapper.addWidget(checkbox)
+            cb_wrapper.addStretch()
 
-            left_layout.addLayout(wl_layout)
-
-            self.wavelength_inputs.append(spinbox)
+            checkbox_layout.addLayout(cb_wrapper, stretch=1)
             self.wavelength_checkboxes.append(checkbox)
 
-        # 3. 시간 입력 필드
-        time_label = QLabel("시간 (sec)")
-        time_label.setStyleSheet("color: white;")
-        left_layout.addWidget(time_label)
+        left_layout.addLayout(checkbox_layout)
+
+        left_layout.addSpacing(15)
+
+        # ===== 3. Current Time 입력 =====
+        current_time_label = QLabel("Current Time (sec)")
+        current_time_label.setStyleSheet("color: white; font-size: 10pt;")
+        left_layout.addWidget(current_time_label)
 
         self.time_spinbox = QDoubleSpinBox()
-        self.time_spinbox.setFixedSize(150, 30)
+        self.time_spinbox.setFixedSize(80, 28)
+        self.time_spinbox.setButtonSymbols(QDoubleSpinBox.NoButtons)  # 화살표 제거
         self.time_spinbox.setSingleStep(0.5)
         self.time_spinbox.setDecimals(2)
         self.time_spinbox.setEnabled(False)
         self.time_spinbox.setKeyboardTracking(False)
         self.time_spinbox.editingFinished.connect(self.on_time_changed)
+        self.time_spinbox.setStyleSheet("""
+            QDoubleSpinBox {
+                background-color: white;
+                border: 1px solid #ccc;
+                border-radius: 2px;
+            }
+        """)
         left_layout.addWidget(self.time_spinbox)
 
-        # 4. Reference Time 입력 필드
+        left_layout.addSpacing(10)
+
+        # ===== 4. Reference Time 입력 =====
         ref_time_label = QLabel("Reference Time (sec)")
-        ref_time_label.setStyleSheet("color: white;")
+        ref_time_label.setStyleSheet("color: white; font-size: 10pt;")
         left_layout.addWidget(ref_time_label)
 
         self.reference_spinbox = QDoubleSpinBox()
-        self.reference_spinbox.setFixedSize(150, 30)
+        self.reference_spinbox.setFixedSize(80, 28)
+        self.reference_spinbox.setButtonSymbols(QDoubleSpinBox.NoButtons)  # 화살표 제거
         self.reference_spinbox.setSingleStep(0.5)
         self.reference_spinbox.setDecimals(2)
         self.reference_spinbox.setEnabled(False)
         self.reference_spinbox.setKeyboardTracking(False)
         self.reference_spinbox.editingFinished.connect(self.on_reference_changed)
+        self.reference_spinbox.setStyleSheet("""
+            QDoubleSpinBox {
+                background-color: white;
+                border: 1px solid #ccc;
+                border-radius: 2px;
+            }
+        """)
         left_layout.addWidget(self.reference_spinbox)
 
-        # 5. Pearson Correlation Detail 체크박스
-        self.detail_checkbox = QCheckBox("Pearson Correlation Detail")
-        self.detail_checkbox.setStyleSheet("color: white; font-size: 11px;")
-        self.detail_checkbox.stateChanged.connect(self.on_detail_checkbox_changed)
-        left_layout.addWidget(self.detail_checkbox)
+        left_layout.addSpacing(15)
 
-        # 6. Correlation Window 입력 필드
-        window_label = QLabel("Correlation Window (±nm)")
-        window_label.setStyleSheet("color: white; margin-top: 15px;")
+        # ===== 5. Pearson Correlation Detail 체크박스 =====
+        pearson_layout = QHBoxLayout()
+        pearson_label = QLabel("Pearson Correlation Detail")
+        pearson_label.setStyleSheet("color: white; font-size: 10pt;")
+        self.detail_checkbox = QCheckBox()
+        self.detail_checkbox.stateChanged.connect(self.on_detail_checkbox_changed)
+
+        pearson_layout.addWidget(pearson_label)
+        pearson_layout.addStretch()
+        pearson_layout.addWidget(self.detail_checkbox)
+        left_layout.addLayout(pearson_layout)
+
+        left_layout.addSpacing(10)
+
+        # ===== 6. Correlation Window 입력 =====
+        window_label = QLabel("Window")
+        window_label.setStyleSheet("color: white; font-size: 10pt;")
         left_layout.addWidget(window_label)
 
         self.window_spinbox = QDoubleSpinBox()
-        self.window_spinbox.setFixedSize(150, 30)
+        self.window_spinbox.setFixedSize(80, 28)
+        self.window_spinbox.setButtonSymbols(QDoubleSpinBox.NoButtons)  # 화살표 제거
         self.window_spinbox.setRange(1.0, 50.0)
         self.window_spinbox.setSingleStep(0.5)
         self.window_spinbox.setDecimals(1)
-        self.window_spinbox.setValue(10.0)  # 기본값 10nm
+        self.window_spinbox.setValue(10.0)
         self.window_spinbox.setSuffix(" nm")
         self.window_spinbox.setKeyboardTracking(False)
         self.window_spinbox.editingFinished.connect(self.on_window_changed)
-        self.window_spinbox.setToolTip("총 범위 (예: 10nm → ±5nm)")
+        self.window_spinbox.setStyleSheet("""
+            QDoubleSpinBox {
+                background-color: white;
+                border: 1px solid #ccc;
+                border-radius: 2px;
+            }
+        """)
         left_layout.addWidget(self.window_spinbox)
 
-        # 7. Full Spectrum Correlation Detail 체크박스
-        self.full_spectrum_checkbox = QCheckBox("Full Spectrum Correlation Detail")
-        self.full_spectrum_checkbox.setStyleSheet("color: white; font-size: 11px; margin-top: 10px;")
+        left_layout.addSpacing(15)
+
+        # ===== 7. Full Spectrum Correlation Detail 체크박스 =====
+        full_spectrum_layout = QHBoxLayout()
+        full_spectrum_label = QLabel("Full Spectrum Correlation")
+        full_spectrum_label.setStyleSheet("color: white; font-size: 10pt;")
+        self.full_spectrum_checkbox = QCheckBox()
         self.full_spectrum_checkbox.stateChanged.connect(self.on_full_spectrum_checkbox_changed)
-        left_layout.addWidget(self.full_spectrum_checkbox)
+
+        full_spectrum_layout.addWidget(full_spectrum_label)
+        full_spectrum_layout.addStretch()
+        full_spectrum_layout.addWidget(self.full_spectrum_checkbox)
+        left_layout.addLayout(full_spectrum_layout)
 
         left_layout.addStretch()
 
@@ -942,21 +1039,85 @@ class OESAnalyzer(QMainWindow):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
+        right_layout.setSpacing(5)
 
-        # 그래프 A: 스펙트럼 뷰어
+        # ===== 그래프 A: 스펙트럼 뷰어 + 줌 버튼 =====
+        graph_a_container = QWidget()
+        graph_a_layout = QVBoxLayout(graph_a_container)
+        graph_a_layout.setContentsMargins(0, 0, 0, 0)
+        graph_a_layout.setSpacing(2)
+
+        # 줌 버튼 (그래프 A)
+        zoom_a_layout = QHBoxLayout()
+        zoom_a_layout.addStretch()
+
+        self.zoom_in_a_btn = QPushButton("+")
+        self.zoom_in_a_btn.setFixedSize(30, 25)
+        self.zoom_in_a_btn.setToolTip("Zoom In")
+        self.zoom_in_a_btn.clicked.connect(lambda: self.zoom_graph('a', 'in'))
+
+        self.zoom_out_a_btn = QPushButton("-")
+        self.zoom_out_a_btn.setFixedSize(30, 25)
+        self.zoom_out_a_btn.setToolTip("Zoom Out")
+        self.zoom_out_a_btn.clicked.connect(lambda: self.zoom_graph('a', 'out'))
+
+        self.reset_a_btn = QPushButton("Reset")
+        self.reset_a_btn.setFixedSize(50, 25)
+        self.reset_a_btn.setToolTip("Reset View")
+        self.reset_a_btn.clicked.connect(lambda: self.zoom_graph('a', 'reset'))
+
+        zoom_a_layout.addWidget(self.zoom_in_a_btn)
+        zoom_a_layout.addWidget(self.zoom_out_a_btn)
+        zoom_a_layout.addWidget(self.reset_a_btn)
+        graph_a_layout.addLayout(zoom_a_layout)
+
+        # Figure A
         self.figure_a = Figure()
         self.figure_a.set_constrained_layout(True)
         self.canvas_a = FigureCanvas(self.figure_a)
         self.ax_spectrum = self.figure_a.add_subplot(111)
-        right_layout.addWidget(self.canvas_a, stretch=1)
+        graph_a_layout.addWidget(self.canvas_a)
 
-        # 그래프 B: 시계열 뷰어
+        right_layout.addWidget(graph_a_container, stretch=1)
+
+        # ===== 그래프 B: 시계열 뷰어 + 줌 버튼 =====
+        graph_b_container = QWidget()
+        graph_b_layout = QVBoxLayout(graph_b_container)
+        graph_b_layout.setContentsMargins(0, 0, 0, 0)
+        graph_b_layout.setSpacing(2)
+
+        # 줌 버튼 (그래프 B)
+        zoom_b_layout = QHBoxLayout()
+        zoom_b_layout.addStretch()
+
+        self.zoom_in_b_btn = QPushButton("+")
+        self.zoom_in_b_btn.setFixedSize(30, 25)
+        self.zoom_in_b_btn.setToolTip("Zoom In")
+        self.zoom_in_b_btn.clicked.connect(lambda: self.zoom_graph('b', 'in'))
+
+        self.zoom_out_b_btn = QPushButton("-")
+        self.zoom_out_b_btn.setFixedSize(30, 25)
+        self.zoom_out_b_btn.setToolTip("Zoom Out")
+        self.zoom_out_b_btn.clicked.connect(lambda: self.zoom_graph('b', 'out'))
+
+        self.reset_b_btn = QPushButton("Reset")
+        self.reset_b_btn.setFixedSize(50, 25)
+        self.reset_b_btn.setToolTip("Reset View")
+        self.reset_b_btn.clicked.connect(lambda: self.zoom_graph('b', 'reset'))
+
+        zoom_b_layout.addWidget(self.zoom_in_b_btn)
+        zoom_b_layout.addWidget(self.zoom_out_b_btn)
+        zoom_b_layout.addWidget(self.reset_b_btn)
+        graph_b_layout.addLayout(zoom_b_layout)
+
+        # Figure B
         self.figure_b = Figure()
         self.figure_b.set_constrained_layout(True)
         self.canvas_b = FigureCanvas(self.figure_b)
         self.ax_timeseries = self.figure_b.add_subplot(111)
-        right_layout.addWidget(self.canvas_b, stretch=1)
+        graph_b_layout.addWidget(self.canvas_b)
+
+        right_layout.addWidget(graph_b_container, stretch=1)
 
         # 메인 레이아웃에 패널 추가
         main_layout.addWidget(left_panel)
@@ -1140,9 +1301,12 @@ class OESAnalyzer(QMainWindow):
         wavelengths = []
         for i in range(3):
             if self.wavelength_checkboxes[i].isChecked():
-                wl = self.wavelength_inputs[i].value()
-                if wl > 0:
-                    wavelengths.append(wl)
+                try:
+                    wl = float(self.wavelength_inputs[i].text())
+                    if 200.0 <= wl <= 800.0 and wl > 0:
+                        wavelengths.append(wl)
+                except ValueError:
+                    pass
         return wavelengths
 
     def calculate_correlation_single_wavelength(self, ref_spectrum, current_spectrum, wavelength):
@@ -1227,6 +1391,10 @@ class OESAnalyzer(QMainWindow):
         self.ax_spectrum.set_ylabel("Emission Intensity (a.u.)")
         self.ax_spectrum.set_title(f"Spectrum at t = {self.current_time:.2f}s")
         self.ax_spectrum.grid(True, linestyle='--', alpha=0.3, color='lightgray')
+
+        # 원본 범위 저장 (줌 리셋용)
+        self.original_xlim_a = self.ax_spectrum.get_xlim()
+        self.original_ylim_a = self.ax_spectrum.get_ylim()
 
         self.canvas_a.draw()
 
@@ -1342,6 +1510,10 @@ class OESAnalyzer(QMainWindow):
         ax_corr.set_ylim(-1.0, 1.0)
         ax_corr.legend(loc='upper right')
 
+        # 원본 범위 저장 (줌 리셋용)
+        self.original_xlim_b = self.ax_timeseries.get_xlim()
+        self.original_ylim_b = self.ax_timeseries.get_ylim()
+
         self.canvas_b.draw()
 
     def on_time_changed(self):
@@ -1387,6 +1559,67 @@ class OESAnalyzer(QMainWindow):
             self.update_timeseries_graph()
             self.update_detail_window()
             self.update_full_spectrum_window()
+
+    def zoom_graph(self, graph, action):
+        """
+        그래프 줌 핸들러
+
+        Parameters:
+        - graph: 'a' (Spectrum) or 'b' (Timeseries)
+        - action: 'in', 'out', or 'reset'
+        """
+        if graph == 'a':
+            ax = self.ax_spectrum
+            original_xlim = self.original_xlim_a
+            original_ylim = self.original_ylim_a
+        elif graph == 'b':
+            ax = self.ax_timeseries
+            original_xlim = self.original_xlim_b
+            original_ylim = self.original_ylim_b
+        else:
+            return
+
+        if action == 'reset':
+            # 원본 범위로 복원
+            if original_xlim is not None and original_ylim is not None:
+                ax.set_xlim(original_xlim)
+                ax.set_ylim(original_ylim)
+                if graph == 'a':
+                    self.canvas_a.draw()
+                else:
+                    self.canvas_b.draw()
+        elif action in ['in', 'out']:
+            # 현재 범위 가져오기
+            current_xlim = ax.get_xlim()
+            current_ylim = ax.get_ylim()
+
+            # 줌 인/아웃 적용
+            factor = 0.8 if action == 'in' else 1.25
+            new_xlim = self._apply_zoom(current_xlim, factor)
+            new_ylim = self._apply_zoom(current_ylim, factor)
+
+            ax.set_xlim(new_xlim)
+            ax.set_ylim(new_ylim)
+
+            if graph == 'a':
+                self.canvas_a.draw()
+            else:
+                self.canvas_b.draw()
+
+    def _apply_zoom(self, limits, factor):
+        """
+        중심 기준 줌 적용
+
+        Parameters:
+        - limits: (min, max) 튜플
+        - factor: 줌 팩터 (< 1 = zoom in, > 1 = zoom out)
+
+        Returns:
+        - (new_min, new_max) 튜플
+        """
+        center = (limits[0] + limits[1]) / 2.0
+        half_range = (limits[1] - limits[0]) / 2.0 * factor
+        return (center - half_range, center + half_range)
 
     def get_window_indices(self, wavelength):
         """
