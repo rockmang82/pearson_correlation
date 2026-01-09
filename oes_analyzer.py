@@ -811,11 +811,17 @@ class OESAnalyzer(QMainWindow):
         self.detail_window = None
         self.full_spectrum_window = None
 
-        # 줌 상태 저장 (원본 범위)
-        self.original_xlim_a = None
-        self.original_ylim_a = None
-        self.original_xlim_b = None
-        self.original_ylim_b = None
+        # 줌 상태 관리
+        self.zoom_history_a = []  # 그래프 A 줌 히스토리 [(xlim, ylim), ...]
+        self.zoom_history_b = []  # 그래프 B 줌 히스토리
+
+        # 박스 선택 상태
+        self.is_dragging_a = False
+        self.is_dragging_b = False
+        self.drag_start_a = None  # (x, y) 시작점
+        self.drag_start_b = None
+        self.rect_a = None  # 선택 사각형 객체
+        self.rect_b = None
 
         # GUI 컴포넌트 초기화
         self.init_ui()
@@ -1044,90 +1050,228 @@ class OESAnalyzer(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(5)
 
-        # ===== 그래프 A: 스펙트럼 뷰어 + 줌 버튼 =====
-        graph_a_container = QWidget()
-        graph_a_layout = QVBoxLayout(graph_a_container)
-        graph_a_layout.setContentsMargins(0, 0, 0, 0)
-        graph_a_layout.setSpacing(2)
-
-        # 줌 버튼 (그래프 A)
-        zoom_a_layout = QHBoxLayout()
-        zoom_a_layout.addStretch()
-
-        self.zoom_in_a_btn = QPushButton("+")
-        self.zoom_in_a_btn.setFixedSize(30, 25)
-        self.zoom_in_a_btn.setToolTip("Zoom In")
-        self.zoom_in_a_btn.clicked.connect(lambda: self.zoom_graph('a', 'in'))
-
-        self.zoom_out_a_btn = QPushButton("-")
-        self.zoom_out_a_btn.setFixedSize(30, 25)
-        self.zoom_out_a_btn.setToolTip("Zoom Out")
-        self.zoom_out_a_btn.clicked.connect(lambda: self.zoom_graph('a', 'out'))
-
-        self.reset_a_btn = QPushButton("Reset")
-        self.reset_a_btn.setFixedSize(50, 25)
-        self.reset_a_btn.setToolTip("Reset View")
-        self.reset_a_btn.clicked.connect(lambda: self.zoom_graph('a', 'reset'))
-
-        zoom_a_layout.addWidget(self.zoom_in_a_btn)
-        zoom_a_layout.addWidget(self.zoom_out_a_btn)
-        zoom_a_layout.addWidget(self.reset_a_btn)
-        graph_a_layout.addLayout(zoom_a_layout)
-
-        # Figure A
+        # ===== 그래프 A: 스펙트럼 뷰어 =====
         self.figure_a = Figure()
         self.figure_a.set_constrained_layout(True)
         self.canvas_a = FigureCanvas(self.figure_a)
         self.ax_spectrum = self.figure_a.add_subplot(111)
-        graph_a_layout.addWidget(self.canvas_a)
+        right_layout.addWidget(self.canvas_a, stretch=1)
 
-        right_layout.addWidget(graph_a_container, stretch=1)
-
-        # ===== 그래프 B: 시계열 뷰어 + 줌 버튼 =====
-        graph_b_container = QWidget()
-        graph_b_layout = QVBoxLayout(graph_b_container)
-        graph_b_layout.setContentsMargins(0, 0, 0, 0)
-        graph_b_layout.setSpacing(2)
-
-        # 줌 버튼 (그래프 B)
-        zoom_b_layout = QHBoxLayout()
-        zoom_b_layout.addStretch()
-
-        self.zoom_in_b_btn = QPushButton("+")
-        self.zoom_in_b_btn.setFixedSize(30, 25)
-        self.zoom_in_b_btn.setToolTip("Zoom In")
-        self.zoom_in_b_btn.clicked.connect(lambda: self.zoom_graph('b', 'in'))
-
-        self.zoom_out_b_btn = QPushButton("-")
-        self.zoom_out_b_btn.setFixedSize(30, 25)
-        self.zoom_out_b_btn.setToolTip("Zoom Out")
-        self.zoom_out_b_btn.clicked.connect(lambda: self.zoom_graph('b', 'out'))
-
-        self.reset_b_btn = QPushButton("Reset")
-        self.reset_b_btn.setFixedSize(50, 25)
-        self.reset_b_btn.setToolTip("Reset View")
-        self.reset_b_btn.clicked.connect(lambda: self.zoom_graph('b', 'reset'))
-
-        zoom_b_layout.addWidget(self.zoom_in_b_btn)
-        zoom_b_layout.addWidget(self.zoom_out_b_btn)
-        zoom_b_layout.addWidget(self.reset_b_btn)
-        graph_b_layout.addLayout(zoom_b_layout)
-
-        # Figure B
+        # ===== 그래프 B: 시계열 뷰어 =====
         self.figure_b = Figure()
         self.figure_b.set_constrained_layout(True)
         self.canvas_b = FigureCanvas(self.figure_b)
         self.ax_timeseries = self.figure_b.add_subplot(111)
-        graph_b_layout.addWidget(self.canvas_b)
-
-        right_layout.addWidget(graph_b_container, stretch=1)
+        right_layout.addWidget(self.canvas_b, stretch=1)
 
         # 메인 레이아웃에 패널 추가
         main_layout.addWidget(left_panel)
         main_layout.addWidget(right_panel, stretch=1)
 
+        # 줌 이벤트 연결
+        self.setup_zoom_events()
+
         # 초기 상태 그래프 표시
         self.show_empty_graphs()
+
+    def setup_zoom_events(self):
+        """그래프 줌 이벤트 연결"""
+        # 그래프 A 이벤트
+        self.canvas_a.mpl_connect('button_press_event', self.on_press_a)
+        self.canvas_a.mpl_connect('button_release_event', self.on_release_a)
+        self.canvas_a.mpl_connect('motion_notify_event', self.on_motion_a)
+
+        # 그래프 B 이벤트
+        self.canvas_b.mpl_connect('button_press_event', self.on_press_b)
+        self.canvas_b.mpl_connect('button_release_event', self.on_release_b)
+        self.canvas_b.mpl_connect('motion_notify_event', self.on_motion_b)
+
+    def on_press_a(self, event):
+        """그래프 A 마우스 버튼 누름"""
+        if event.inaxes != self.ax_spectrum:
+            return
+
+        # 우클릭: 이전 뷰로 복귀
+        if event.button == 3:  # 우클릭
+            self.zoom_back_a()
+            return
+
+        # 좌클릭: 박스 선택 시작
+        if event.button == 1:  # 좌클릭
+            self.is_dragging_a = True
+            self.drag_start_a = (event.xdata, event.ydata)
+
+            # 선택 사각형 생성 (점선)
+            self.rect_a = plt.Rectangle(
+                (event.xdata, event.ydata), 0, 0,
+                fill=False, edgecolor='red', linestyle='--', linewidth=1.5
+            )
+            self.ax_spectrum.add_patch(self.rect_a)
+
+    def on_motion_a(self, event):
+        """그래프 A 마우스 이동 (드래그 중 사각형 업데이트)"""
+        if not self.is_dragging_a or event.inaxes != self.ax_spectrum:
+            return
+        if self.drag_start_a is None or self.rect_a is None:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+
+        x0, y0 = self.drag_start_a
+        x1, y1 = event.xdata, event.ydata
+
+        # 사각형 위치/크기 업데이트
+        self.rect_a.set_xy((min(x0, x1), min(y0, y1)))
+        self.rect_a.set_width(abs(x1 - x0))
+        self.rect_a.set_height(abs(y1 - y0))
+
+        self.canvas_a.draw_idle()
+
+    def on_release_a(self, event):
+        """그래프 A 마우스 버튼 릴리즈"""
+        if not self.is_dragging_a:
+            return
+
+        self.is_dragging_a = False
+
+        # 사각형 제거
+        if self.rect_a is not None:
+            self.rect_a.remove()
+            self.rect_a = None
+
+        if event.inaxes != self.ax_spectrum:
+            self.canvas_a.draw_idle()
+            return
+
+        if self.drag_start_a is None or event.xdata is None or event.ydata is None:
+            self.canvas_a.draw_idle()
+            return
+
+        x0, y0 = self.drag_start_a
+        x1, y1 = event.xdata, event.ydata
+
+        # 최소 선택 영역 체크 (너무 작으면 클릭으로 처리 - 줌 안함)
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        xlim = self.ax_spectrum.get_xlim()
+        ylim = self.ax_spectrum.get_ylim()
+
+        # 전체 범위의 2% 미만이면 클릭으로 처리
+        if dx < (xlim[1] - xlim[0]) * 0.02 and dy < (ylim[1] - ylim[0]) * 0.02:
+            self.drag_start_a = None
+            self.canvas_a.draw_idle()
+            return
+
+        # 현재 뷰를 히스토리에 저장
+        self.zoom_history_a.append((xlim, ylim))
+
+        # 새 범위 적용
+        new_xlim = (min(x0, x1), max(x0, x1))
+        new_ylim = (min(y0, y1), max(y0, y1))
+
+        self.ax_spectrum.set_xlim(new_xlim)
+        self.ax_spectrum.set_ylim(new_ylim)
+
+        self.drag_start_a = None
+        self.canvas_a.draw()
+
+    def zoom_back_a(self):
+        """그래프 A 이전 뷰로 복귀"""
+        if len(self.zoom_history_a) > 0:
+            xlim, ylim = self.zoom_history_a.pop()
+            self.ax_spectrum.set_xlim(xlim)
+            self.ax_spectrum.set_ylim(ylim)
+            self.canvas_a.draw()
+
+    def on_press_b(self, event):
+        """그래프 B 마우스 버튼 누름"""
+        if event.inaxes != self.ax_timeseries:
+            return
+
+        # 우클릭: 이전 뷰로 복귀
+        if event.button == 3:
+            self.zoom_back_b()
+            return
+
+        # 좌클릭: 박스 선택 시작
+        if event.button == 1:
+            self.is_dragging_b = True
+            self.drag_start_b = (event.xdata, event.ydata)
+
+            self.rect_b = plt.Rectangle(
+                (event.xdata, event.ydata), 0, 0,
+                fill=False, edgecolor='red', linestyle='--', linewidth=1.5
+            )
+            self.ax_timeseries.add_patch(self.rect_b)
+
+    def on_motion_b(self, event):
+        """그래프 B 마우스 이동"""
+        if not self.is_dragging_b or event.inaxes != self.ax_timeseries:
+            return
+        if self.drag_start_b is None or self.rect_b is None:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+
+        x0, y0 = self.drag_start_b
+        x1, y1 = event.xdata, event.ydata
+
+        self.rect_b.set_xy((min(x0, x1), min(y0, y1)))
+        self.rect_b.set_width(abs(x1 - x0))
+        self.rect_b.set_height(abs(y1 - y0))
+
+        self.canvas_b.draw_idle()
+
+    def on_release_b(self, event):
+        """그래프 B 마우스 버튼 릴리즈"""
+        if not self.is_dragging_b:
+            return
+
+        self.is_dragging_b = False
+
+        if self.rect_b is not None:
+            self.rect_b.remove()
+            self.rect_b = None
+
+        if event.inaxes != self.ax_timeseries:
+            self.canvas_b.draw_idle()
+            return
+
+        if self.drag_start_b is None or event.xdata is None or event.ydata is None:
+            self.canvas_b.draw_idle()
+            return
+
+        x0, y0 = self.drag_start_b
+        x1, y1 = event.xdata, event.ydata
+
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        xlim = self.ax_timeseries.get_xlim()
+        ylim = self.ax_timeseries.get_ylim()
+
+        if dx < (xlim[1] - xlim[0]) * 0.02 and dy < (ylim[1] - ylim[0]) * 0.02:
+            self.drag_start_b = None
+            self.canvas_b.draw_idle()
+            return
+
+        self.zoom_history_b.append((xlim, ylim))
+
+        new_xlim = (min(x0, x1), max(x0, x1))
+        new_ylim = (min(y0, y1), max(y0, y1))
+
+        self.ax_timeseries.set_xlim(new_xlim)
+        self.ax_timeseries.set_ylim(new_ylim)
+
+        self.drag_start_b = None
+        self.canvas_b.draw()
+
+    def zoom_back_b(self):
+        """그래프 B 이전 뷰로 복귀"""
+        if len(self.zoom_history_b) > 0:
+            xlim, ylim = self.zoom_history_b.pop()
+            self.ax_timeseries.set_xlim(xlim)
+            self.ax_timeseries.set_ylim(ylim)
+            self.canvas_b.draw()
 
     def show_empty_graphs(self):
         """초기 상태: 빈 그래프 표시"""
@@ -1365,6 +1509,9 @@ class OESAnalyzer(QMainWindow):
 
         self.ax_spectrum.clear()
 
+        # 줌 히스토리 초기화 (새 데이터/시간 변경 시)
+        self.zoom_history_a.clear()
+
         # 현재 시간의 스펙트럼 데이터 가져오기
         spectrum = self.get_spectrum_at_time(self.current_time)
 
@@ -1395,10 +1542,6 @@ class OESAnalyzer(QMainWindow):
         self.ax_spectrum.set_title(f"Spectrum at t = {self.current_time:.2f}s")
         self.ax_spectrum.grid(True, linestyle='--', alpha=0.3, color='lightgray')
 
-        # 원본 범위 저장 (줌 리셋용)
-        self.original_xlim_a = self.ax_spectrum.get_xlim()
-        self.original_ylim_a = self.ax_spectrum.get_ylim()
-
         self.canvas_a.draw()
 
     def update_timeseries_graph(self):
@@ -1409,6 +1552,9 @@ class OESAnalyzer(QMainWindow):
         # ===== Figure 전체 초기화 (버그 수정 핵심) =====
         self.figure_b.clear()
         self.ax_timeseries = self.figure_b.add_subplot(111)
+
+        # 줌 히스토리 초기화
+        self.zoom_history_b.clear()
 
         # 이중 Y축 생성 (매번 새로 생성)
         ax_corr = self.ax_timeseries.twinx()
@@ -1513,10 +1659,6 @@ class OESAnalyzer(QMainWindow):
         ax_corr.set_ylim(-1.0, 1.0)
         ax_corr.legend(loc='upper right')
 
-        # 원본 범위 저장 (줌 리셋용)
-        self.original_xlim_b = self.ax_timeseries.get_xlim()
-        self.original_ylim_b = self.ax_timeseries.get_ylim()
-
         self.canvas_b.draw()
 
     def on_time_changed(self):
@@ -1562,67 +1704,6 @@ class OESAnalyzer(QMainWindow):
             self.update_timeseries_graph()
             self.update_detail_window()
             self.update_full_spectrum_window()
-
-    def zoom_graph(self, graph, action):
-        """
-        그래프 줌 핸들러
-
-        Parameters:
-        - graph: 'a' (Spectrum) or 'b' (Timeseries)
-        - action: 'in', 'out', or 'reset'
-        """
-        if graph == 'a':
-            ax = self.ax_spectrum
-            original_xlim = self.original_xlim_a
-            original_ylim = self.original_ylim_a
-        elif graph == 'b':
-            ax = self.ax_timeseries
-            original_xlim = self.original_xlim_b
-            original_ylim = self.original_ylim_b
-        else:
-            return
-
-        if action == 'reset':
-            # 원본 범위로 복원
-            if original_xlim is not None and original_ylim is not None:
-                ax.set_xlim(original_xlim)
-                ax.set_ylim(original_ylim)
-                if graph == 'a':
-                    self.canvas_a.draw()
-                else:
-                    self.canvas_b.draw()
-        elif action in ['in', 'out']:
-            # 현재 범위 가져오기
-            current_xlim = ax.get_xlim()
-            current_ylim = ax.get_ylim()
-
-            # 줌 인/아웃 적용
-            factor = 0.8 if action == 'in' else 1.25
-            new_xlim = self._apply_zoom(current_xlim, factor)
-            new_ylim = self._apply_zoom(current_ylim, factor)
-
-            ax.set_xlim(new_xlim)
-            ax.set_ylim(new_ylim)
-
-            if graph == 'a':
-                self.canvas_a.draw()
-            else:
-                self.canvas_b.draw()
-
-    def _apply_zoom(self, limits, factor):
-        """
-        중심 기준 줌 적용
-
-        Parameters:
-        - limits: (min, max) 튜플
-        - factor: 줌 팩터 (< 1 = zoom in, > 1 = zoom out)
-
-        Returns:
-        - (new_min, new_max) 튜플
-        """
-        center = (limits[0] + limits[1]) / 2.0
-        half_range = (limits[1] - limits[0]) / 2.0 * factor
-        return (center - half_range, center + half_range)
 
     def get_window_indices(self, wavelength):
         """
