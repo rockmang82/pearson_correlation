@@ -155,9 +155,12 @@ class CorrelationDetailWindow(QWidget):
         wavelengths_info = []
         for i in range(3):
             if parent.wavelength_checkboxes[i].isChecked():
-                wl = parent.wavelength_inputs[i].value()
-                if wl > 0:
-                    wavelengths_info.append(wl)
+                try:
+                    wl = float(parent.wavelength_inputs[i].text())
+                    if 200.0 <= wl <= 800.0 and wl > 0:
+                        wavelengths_info.append(wl)
+                except ValueError:
+                    pass
 
         if not wavelengths_info:
             return
