@@ -790,6 +790,303 @@ class FullSpectrumDetailWindow(QWidget):
         event.accept()
 
 
+class MultiPeakROIDetailWindow(QWidget):
+    """창5: Multi-Peak ROI Correlation 상세 정보 팝업"""
+
+    closed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Window)
+        self.parent_window = parent
+        self.init_ui()
+
+    def init_ui(self):
+        """GUI 초기화"""
+        self.setWindowTitle("Multi-Peak ROI Correlation Detail")
+        self.setMinimumSize(500, 400)
+        self.resize(600, 500)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #ccc; background: white; }
+            QTabBar::tab { padding: 8px 16px; }
+            QTabBar::tab:selected { background: #9467BD; color: white; }
+        """)
+        main_layout.addWidget(self.tab_widget)
+
+    def update_content(self, parent):
+        """내용 업데이트"""
+        if parent.data is None:
+            return
+
+        self.tab_widget.clear()
+
+        # 파장 정보 가져오기
+        wavelengths = []
+        for i in range(2):
+            if parent.wavelength_checkboxes[i].isChecked():
+                try:
+                    wl = float(parent.wavelength_inputs[i].text())
+                    if 200.0 <= wl <= 800.0:
+                        wavelengths.append(wl)
+                except ValueError:
+                    pass
+
+        if len(wavelengths) < 2:
+            return
+
+        times = parent.data.iloc[:, 1].values
+        current_time = parent.time_spinbox.value()
+        reference_time = parent.reference_spinbox.value()
+        correlation_window = parent.correlation_window
+        half_window = correlation_window / 2.0
+
+        current_idx = int(np.argmin(np.abs(times - current_time)))
+        ref_idx = int(np.argmin(np.abs(times - reference_time)))
+
+        ref_spectrum = parent.data.iloc[ref_idx, 2:].values.astype(float)
+        current_spectrum = parent.data.iloc[current_idx, 2:].values.astype(float)
+
+        # Multi-Peak ROI 인덱스 계산
+        indices = set()
+        for wl in wavelengths:
+            start_idx, end_idx = parent.get_window_indices(wl)
+            for i in range(start_idx, end_idx + 1):
+                indices.add(i)
+
+        indices = sorted(list(indices))
+        n = len(indices)
+
+        x = np.array([ref_spectrum[i] for i in indices])
+        y = np.array([current_spectrum[i] for i in indices])
+
+        # 통계 계산
+        x_mean = np.mean(x)
+        y_mean = np.mean(y)
+        x_std = np.std(x)
+        y_std = np.std(y)
+
+        x_diff = x - x_mean
+        y_diff = y - y_mean
+
+        sum_xy = np.sum(x_diff * y_diff)
+        sum_x_sq = np.sum(x_diff ** 2)
+        sum_y_sq = np.sum(y_diff ** 2)
+
+        denominator_val = np.sqrt(sum_x_sq * sum_y_sq)
+        r_value = sum_xy / denominator_val if denominator_val != 0 else 0.0
+
+        # ========================================
+        # 탭 1: Overview (공식 + 요약)
+        # ========================================
+        overview_tab = QWidget()
+        overview_layout = QVBoxLayout(overview_tab)
+        overview_layout.setContentsMargins(10, 10, 10, 10)
+
+        overview_scroll = QScrollArea()
+        overview_scroll.setWidgetResizable(True)
+        overview_content = QWidget()
+        overview_scroll_layout = QVBoxLayout(overview_content)
+
+        # 범위 문자열 생성
+        range_str = f"({wavelengths[0]:.1f} ± {half_window:.1f}) ∪ ({wavelengths[1]:.1f} ± {half_window:.1f}) nm"
+
+        overview_html = f"""
+        <div style='font-family: Arial; font-size: 11px; padding: 10px;'>
+
+        <h2 style='color: #9467BD;'>Multi-Peak ROI Pearson Correlation</h2>
+
+        <div style='background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0;'>
+        <p style='font-size: 14px; text-align: center;'>
+        <b>r = Σ(xᵢ - x̄)(yᵢ - ȳ) / √[Σ(xᵢ - x̄)² × Σ(yᵢ - ȳ)²]</b>
+        </p>
+        </div>
+
+        <h3 style='color: #2E7D32;'>Multi-Peak ROI Definition</h3>
+        <hr>
+        <p>
+        두 파장의 Correlation Window 범위 <b>합집합</b>을 사용하여 계산합니다.
+        </p>
+        <p style='background-color: #e8f5e9; padding: 10px; border-radius: 5px;'>
+        <b>ROI Range:</b> {range_str}
+        </p>
+
+        <h3 style='color: #2E7D32;'>Parameters</h3>
+        <hr>
+
+        <table style='width: 100%; border-collapse: collapse;'>
+        <tr style='background-color: #e8d5f5;'>
+            <td style='padding: 8px; border: 1px solid #ddd;'><b>Symbol</b></td>
+            <td style='padding: 8px; border: 1px solid #ddd;'><b>Name</b></td>
+            <td style='padding: 8px; border: 1px solid #ddd;'><b>Description</b></td>
+        </tr>
+        <tr>
+            <td style='padding: 8px; border: 1px solid #ddd;'>λ₁</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Wavelength 1</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>{wavelengths[0]:.1f} nm</td>
+        </tr>
+        <tr style='background-color: #f9f9f9;'>
+            <td style='padding: 8px; border: 1px solid #ddd;'>λ₂</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Wavelength 2</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>{wavelengths[1]:.1f} nm</td>
+        </tr>
+        <tr>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Window</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Correlation Window</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>±{half_window:.1f} nm (total {correlation_window:.1f} nm)</td>
+        </tr>
+        <tr style='background-color: #f9f9f9;'>
+            <td style='padding: 8px; border: 1px solid #ddd;'>n</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Data Points</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>{n} points (union of both ranges)</td>
+        </tr>
+        <tr>
+            <td style='padding: 8px; border: 1px solid #ddd;'>xᵢ</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Reference Intensity</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Reference 시점의 ROI 내 스펙트럼 강도</td>
+        </tr>
+        <tr style='background-color: #f9f9f9;'>
+            <td style='padding: 8px; border: 1px solid #ddd;'>yᵢ</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>Current Intensity</td>
+            <td style='padding: 8px; border: 1px solid #ddd;'>현재 시점의 ROI 내 스펙트럼 강도</td>
+        </tr>
+        </table>
+
+        <h3 style='color: #2E7D32; margin-top: 20px;'>Current Settings</h3>
+        <hr>
+        <p>
+        <b>Reference Time:</b> {reference_time:.2f} sec<br>
+        <b>Current Time:</b> {current_time:.2f} sec<br>
+        <b>Wavelength 1:</b> {wavelengths[0]:.1f} nm (±{half_window:.1f} nm)<br>
+        <b>Wavelength 2:</b> {wavelengths[1]:.1f} nm (±{half_window:.1f} nm)<br>
+        <b>Total Data Points:</b> {n}
+        </p>
+
+        <div style='background-color: #e8d5f5; padding: 15px; border-radius: 5px; margin-top: 15px; border: 2px solid #9467BD;'>
+        <p style='font-size: 16px; text-align: center; margin: 0;'>
+        <b style='color: #7B1FA2;'>Multi-Peak ROI r = {r_value:.6f}</b>
+        </p>
+        </div>
+
+        </div>
+        """
+
+        overview_label = QLabel(overview_html)
+        overview_label.setWordWrap(True)
+        overview_label.setTextFormat(Qt.RichText)
+        overview_scroll_layout.addWidget(overview_label)
+        overview_scroll.setWidget(overview_content)
+        overview_layout.addWidget(overview_scroll)
+
+        self.tab_widget.addTab(overview_tab, "Overview")
+
+        # ========================================
+        # 탭 2: Calculation Details (계산 과정)
+        # ========================================
+        calc_tab = QWidget()
+        calc_layout = QVBoxLayout(calc_tab)
+        calc_layout.setContentsMargins(10, 10, 10, 10)
+
+        calc_scroll = QScrollArea()
+        calc_scroll.setWidgetResizable(True)
+        calc_content = QWidget()
+        calc_scroll_layout = QVBoxLayout(calc_content)
+
+        calc_html = f"""
+        <div style='font-family: monospace; font-size: 11px; padding: 10px;'>
+
+        <h3 style='color: #9467BD;'>Multi-Peak ROI Calculation</h3>
+        <p>
+        <b>Reference Time:</b> {reference_time:.2f} sec<br>
+        <b>Current Time:</b> {current_time:.2f} sec<br>
+        <b>λ₁:</b> {wavelengths[0]:.1f} nm | <b>λ₂:</b> {wavelengths[1]:.1f} nm<br>
+        <b>Window:</b> ±{half_window:.1f} nm<br>
+        <b>ROI Data Points:</b> n = {n}
+        </p>
+        <hr>
+
+        <h4 style='color: #2E7D32;'>Statistics Summary</h4>
+        <div style='background-color: #fafafa; padding: 10px; border-radius: 5px;'>
+        <b>Reference Spectrum (xᵢ) - ROI Region:</b><br>
+        &nbsp;&nbsp;Sum: Σxᵢ = {np.sum(x):.2f}<br>
+        &nbsp;&nbsp;Mean: x̄ = {x_mean:.4f}<br>
+        &nbsp;&nbsp;Std Dev: σx = {x_std:.4f}<br>
+        &nbsp;&nbsp;Min: {np.min(x):.2f} | Max: {np.max(x):.2f}<br><br>
+
+        <b>Current Spectrum (yᵢ) - ROI Region:</b><br>
+        &nbsp;&nbsp;Sum: Σyᵢ = {np.sum(y):.2f}<br>
+        &nbsp;&nbsp;Mean: ȳ = {y_mean:.4f}<br>
+        &nbsp;&nbsp;Std Dev: σy = {y_std:.4f}<br>
+        &nbsp;&nbsp;Min: {np.min(y):.2f} | Max: {np.max(y):.2f}<br>
+        </div>
+
+        <h4 style='color: #2E7D32; margin-top: 15px;'>Step-by-Step Calculation</h4>
+
+        <div style='background-color: #fff8e1; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 1: Calculate Means</b><br>
+        &nbsp;&nbsp;x̄ = Σxᵢ / n = {np.sum(x):.2f} / {n} = <b>{x_mean:.4f}</b><br>
+        &nbsp;&nbsp;ȳ = Σyᵢ / n = {np.sum(y):.2f} / {n} = <b>{y_mean:.4f}</b>
+        </div>
+
+        <div style='background-color: #e3f2fd; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 2: Calculate Deviations</b><br>
+        &nbsp;&nbsp;(xᵢ - x̄): range [{np.min(x_diff):.2f}, {np.max(x_diff):.2f}]<br>
+        &nbsp;&nbsp;(yᵢ - ȳ): range [{np.min(y_diff):.2f}, {np.max(y_diff):.2f}]
+        </div>
+
+        <div style='background-color: #f3e5f5; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 3: Calculate Sum of Squared Deviations</b><br>
+        &nbsp;&nbsp;Σ(xᵢ - x̄)² = <b>{sum_x_sq:.4f}</b><br>
+        &nbsp;&nbsp;Σ(yᵢ - ȳ)² = <b>{sum_y_sq:.4f}</b>
+        </div>
+
+        <div style='background-color: #e8f5e9; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 4: Calculate Covariance (Numerator)</b><br>
+        &nbsp;&nbsp;Σ(xᵢ - x̄)(yᵢ - ȳ) = <b>{sum_xy:.4f}</b>
+        </div>
+
+        <div style='background-color: #fff3e0; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 5: Calculate Denominator</b><br>
+        &nbsp;&nbsp;√[Σ(xᵢ - x̄)² × Σ(yᵢ - ȳ)²]<br>
+        &nbsp;&nbsp;= √[{sum_x_sq:.4f} × {sum_y_sq:.4f}]<br>
+        &nbsp;&nbsp;= √[{sum_x_sq * sum_y_sq:.4f}]<br>
+        &nbsp;&nbsp;= <b>{denominator_val:.4f}</b>
+        </div>
+
+        <div style='background-color: #fce4ec; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+        <b>Step 6: Final Calculation</b><br>
+        &nbsp;&nbsp;r = {sum_xy:.4f} / {denominator_val:.4f}<br>
+        &nbsp;&nbsp;<span style='font-size: 14px;'><b>r = {r_value:.6f}</b></span>
+        </div>
+
+        <div style='background-color: #e8d5f5; padding: 15px; border-radius: 5px; margin-top: 15px; border: 2px solid #9467BD;'>
+        <p style='font-size: 16px; text-align: center; margin: 0;'>
+        <b style='color: #7B1FA2;'>Multi-Peak ROI Correlation (r) = {r_value:.6f}</b>
+        </p>
+        </div>
+
+        </div>
+        """
+
+        calc_label = QLabel(calc_html)
+        calc_label.setWordWrap(True)
+        calc_label.setTextFormat(Qt.RichText)
+        calc_scroll_layout.addWidget(calc_label)
+        calc_scroll.setWidget(calc_content)
+        calc_layout.addWidget(calc_scroll)
+
+        self.tab_widget.addTab(calc_tab, "Calculation Details")
+
+    def closeEvent(self, event):
+        """창 닫힘 이벤트"""
+        self.closed.emit()
+        event.accept()
+
+
 class OESAnalyzer(QMainWindow):
     """메인 윈도우 클래스"""
 
@@ -810,6 +1107,7 @@ class OESAnalyzer(QMainWindow):
         # Detail Windows
         self.detail_window = None
         self.full_spectrum_window = None
+        self.multi_peak_window = None  # 새로 추가
 
         # 줌 상태 관리
         self.zoom_history_a = []  # 그래프 A 줌 히스토리 [(xlim, ylim), ...]
@@ -872,12 +1170,12 @@ class OESAnalyzer(QMainWindow):
 
         left_layout.addSpacing(10)
 
-        # ===== 2. 파장 입력 (한 줄에 3개) =====
+        # ===== 2. 파장 입력 (한 줄에 2개) =====
         # 레이블 행 (8pt)
         wavelength_label_layout = QHBoxLayout()
-        wavelength_label_layout.setSpacing(5)
+        wavelength_label_layout.setSpacing(10)
 
-        for i in range(3):
+        for i in range(2):  # 3 → 2로 변경
             lbl = QLabel(f"파장{i+1}")
             lbl.setStyleSheet("color: white; font-size: 8pt;")
             lbl.setAlignment(Qt.AlignCenter)
@@ -887,10 +1185,10 @@ class OESAnalyzer(QMainWindow):
 
         # 입력창 행 (QLineEdit, 화살표 없음)
         wavelength_input_layout = QHBoxLayout()
-        wavelength_input_layout.setSpacing(5)
+        wavelength_input_layout.setSpacing(10)
 
         self.wavelength_inputs = []
-        default_wavelengths = [486.1, 656.3, 200.0]
+        default_wavelengths = [486.1, 656.3]  # 2개만
 
         for i, default_wl in enumerate(default_wavelengths):
             line_edit = QLineEdit()
@@ -916,18 +1214,19 @@ class OESAnalyzer(QMainWindow):
 
         left_layout.addLayout(wavelength_input_layout)
 
-        # 체크박스 행
+        # 체크박스 행 (2개)
         checkbox_layout = QHBoxLayout()
-        checkbox_layout.setSpacing(5)
+        checkbox_layout.setSpacing(10)
 
         self.wavelength_checkboxes = []
-        default_checked = [True, True, False]
+        default_checked = [True, True]  # 2개만
 
         for i, checked in enumerate(default_checked):
             checkbox = QCheckBox()
             checkbox.setChecked(checked)
             checkbox.setStyleSheet("margin-left: 20px;")
             checkbox.stateChanged.connect(self.on_wavelength_changed)
+            checkbox.stateChanged.connect(self.update_multi_peak_checkbox_state)  # 추가
 
             # 체크박스 중앙 정렬용 wrapper
             cb_wrapper = QHBoxLayout()
@@ -1041,6 +1340,21 @@ class OESAnalyzer(QMainWindow):
         full_spectrum_layout.addStretch()
         full_spectrum_layout.addWidget(self.full_spectrum_checkbox)
         left_layout.addLayout(full_spectrum_layout)
+
+        left_layout.addSpacing(10)
+
+        # ===== 8. Multi-Peak ROI 체크박스 (새로 추가) =====
+        multi_peak_layout = QHBoxLayout()
+        self.multi_peak_label = QLabel("Multi-Peak ROI")
+        self.multi_peak_label.setStyleSheet("color: white; font-size: 10pt;")
+        self.multi_peak_checkbox = QCheckBox()
+        self.multi_peak_checkbox.setEnabled(False)  # 초기 비활성화 (파장 2개 선택 시 활성화)
+        self.multi_peak_checkbox.stateChanged.connect(self.on_multi_peak_checkbox_changed)
+
+        multi_peak_layout.addWidget(self.multi_peak_label)
+        multi_peak_layout.addStretch()
+        multi_peak_layout.addWidget(self.multi_peak_checkbox)
+        left_layout.addLayout(multi_peak_layout)
 
         left_layout.addStretch()
 
@@ -1446,7 +1760,7 @@ class OESAnalyzer(QMainWindow):
     def get_selected_wavelengths(self):
         """체크된 파장만 반환"""
         wavelengths = []
-        for i in range(3):
+        for i in range(2):  # 3 → 2로 변경
             if self.wavelength_checkboxes[i].isChecked():
                 try:
                     wl = float(self.wavelength_inputs[i].text())
@@ -1501,6 +1815,80 @@ class OESAnalyzer(QMainWindow):
         denominator = np.sqrt(np.sum((x - x_mean)**2) * np.sum((y - y_mean)**2))
 
         return numerator / denominator if denominator != 0 else 0.0
+
+    def update_multi_peak_checkbox_state(self):
+        """파장 체크박스 상태에 따라 Multi-Peak ROI 체크박스 활성화/비활성화"""
+        # 파장1, 파장2 모두 체크되어 있는지 확인
+        both_checked = (
+            len(self.wavelength_checkboxes) >= 2 and
+            self.wavelength_checkboxes[0].isChecked() and
+            self.wavelength_checkboxes[1].isChecked()
+        )
+
+        self.multi_peak_checkbox.setEnabled(both_checked)
+
+        # 비활성화 시 체크 해제
+        if not both_checked:
+            self.multi_peak_checkbox.setChecked(False)
+
+        # 레이블 색상 변경 (비활성화 시 회색)
+        if both_checked:
+            self.multi_peak_label.setStyleSheet("color: white; font-size: 10pt;")
+        else:
+            self.multi_peak_label.setStyleSheet("color: #888888; font-size: 10pt;")
+
+    def calculate_multi_peak_roi_correlation(self, ref_spectrum, current_spectrum):
+        """
+        Multi-Peak ROI Pearson Correlation 계산
+        두 파장의 Correlation Window 범위 합집합 사용
+
+        Parameters:
+        - ref_spectrum: Reference 시점의 전체 스펙트럼 (1201 포인트)
+        - current_spectrum: 현재 시점의 전체 스펙트럼 (1201 포인트)
+
+        Returns:
+        - r: Pearson correlation coefficient (-1 ~ 1)
+        - indices: 사용된 인덱스 집합
+        """
+        # 두 파장 가져오기
+        wavelengths = []
+        for i in range(2):
+            if self.wavelength_checkboxes[i].isChecked():
+                try:
+                    wl = float(self.wavelength_inputs[i].text())
+                    if 200.0 <= wl <= 800.0:
+                        wavelengths.append(wl)
+                except ValueError:
+                    pass
+
+        if len(wavelengths) < 2:
+            return 0.0, set()
+
+        # 두 파장의 Window 범위 합집합
+        indices = set()
+        for wl in wavelengths:
+            start_idx, end_idx = self.get_window_indices(wl)
+            for i in range(start_idx, end_idx + 1):
+                indices.add(i)
+
+        indices = sorted(list(indices))
+
+        if len(indices) == 0:
+            return 0.0, set()
+
+        x = np.array([ref_spectrum[i] for i in indices])
+        y = np.array([current_spectrum[i] for i in indices])
+
+        # Pearson correlation 계산
+        x_mean = np.mean(x)
+        y_mean = np.mean(y)
+
+        numerator = np.sum((x - x_mean) * (y - y_mean))
+        denominator = np.sqrt(np.sum((x - x_mean)**2) * np.sum((y - y_mean)**2))
+
+        r = numerator / denominator if denominator != 0 else 0.0
+
+        return r, set(indices)
 
     def update_spectrum_graph(self):
         """그래프 A 업데이트: 스펙트럼 뷰어"""
@@ -1572,7 +1960,7 @@ class OESAnalyzer(QMainWindow):
         texts = []
 
         # 파장별 시계열 데이터 플롯 (좌측 Y축)
-        colors = ['tab:blue', 'tab:orange', 'tab:green']
+        colors = ['tab:blue', 'tab:orange']  # 2개만
         for i, wl in enumerate(selected_wavelengths):
             intensities = []
             for _, row in self.data.iterrows():
@@ -1605,7 +1993,7 @@ class OESAnalyzer(QMainWindow):
                 )
                 texts.append(txt)
 
-        # ===== Full Spectrum Correlation 시계열 (수정됨) =====
+        # ===== Full Spectrum Correlation 시계열 =====
         if ref_spectrum is not None:
             full_spectrum_correlations = []
 
@@ -1615,12 +2003,45 @@ class OESAnalyzer(QMainWindow):
                 full_spectrum_correlations.append(r_full)
 
             # 우측 보조축에 Full Spectrum Correlation 플롯
-            # 색상: 연한 회색 (#AAAAAA), 굵기: 1.5pt (다른 그래프와 동일)
             ax_corr.plot(
                 run_times, full_spectrum_correlations,
-                color='#AAAAAA',  # 연한 회색
-                linewidth=1.5,    # 다른 그래프와 동일한 굵기
+                color='#AAAAAA',
+                linewidth=1.5,
                 label='Full Spectrum r'
+            )
+
+        # ===== Multi-Peak ROI Correlation 시계열 (새로 추가) =====
+        if ref_spectrum is not None and len(selected_wavelengths) >= 2:
+            multi_peak_correlations = []
+
+            for t_idx in range(len(run_times)):
+                t_spectrum = self.data.iloc[t_idx, 2:].values.astype(float)
+                r_mp, _ = self.calculate_multi_peak_roi_correlation(ref_spectrum, t_spectrum)
+                multi_peak_correlations.append(r_mp)
+
+            # 보라색 시계열 라인
+            ax_corr.plot(
+                run_times, multi_peak_correlations,
+                color='#9467BD',  # 보라색
+                linewidth=1.5,
+                label='Multi-Peak ROI r'
+            )
+
+            # Current Time에서의 값 텍스트 표시 (그래프 중앙)
+            current_mp_r, _ = self.calculate_multi_peak_roi_correlation(ref_spectrum, current_spectrum)
+
+            # Y축 범위의 중앙 계산
+            ylim = self.ax_timeseries.get_ylim()
+            y_center = (ylim[0] + ylim[1]) / 2
+
+            self.ax_timeseries.text(
+                self.current_time, y_center,
+                f'MP-ROI r={current_mp_r:.3f}',
+                fontsize=10,
+                fontweight='bold',
+                color='#9467BD',
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
+                          edgecolor='#9467BD', alpha=0.8)
             )
 
         # 현재 시간 수직선
@@ -1654,8 +2075,8 @@ class OESAnalyzer(QMainWindow):
         self.ax_timeseries.grid(True, linestyle='--', alpha=0.3, color='lightgray')
         self.ax_timeseries.legend(loc='upper left')
 
-        # 우측 Y축 설정 (Full Spectrum Correlation)
-        ax_corr.set_ylabel("Full Spectrum Correlation (r)")
+        # 우측 Y축 설정
+        ax_corr.set_ylabel("Correlation (r)")
         ax_corr.set_ylim(-1.0, 1.0)
         ax_corr.legend(loc='upper right')
 
@@ -1672,6 +2093,7 @@ class OESAnalyzer(QMainWindow):
         self.update_timeseries_graph()
         self.update_detail_window()
         self.update_full_spectrum_window()
+        self.update_multi_peak_window()  # 추가
 
     def on_reference_changed(self):
         """Reference Time SpinBox Enter 입력 핸들러"""
@@ -1683,6 +2105,7 @@ class OESAnalyzer(QMainWindow):
         self.update_timeseries_graph()
         self.update_detail_window()
         self.update_full_spectrum_window()
+        self.update_multi_peak_window()  # 추가
 
     def on_wavelength_changed(self):
         """파장 변경 핸들러"""
@@ -1693,6 +2116,8 @@ class OESAnalyzer(QMainWindow):
         self.update_spectrum_graph()
         self.update_timeseries_graph()
         self.update_detail_window()
+        self.update_full_spectrum_window()
+        self.update_multi_peak_window()  # 추가
 
     def on_window_changed(self):
         """Correlation Window 변경 핸들러"""
@@ -1704,6 +2129,7 @@ class OESAnalyzer(QMainWindow):
             self.update_timeseries_graph()
             self.update_detail_window()
             self.update_full_spectrum_window()
+            self.update_multi_peak_window()  # 추가
 
     def get_window_indices(self, wavelength):
         """
@@ -1817,6 +2243,43 @@ class OESAnalyzer(QMainWindow):
             return
 
         self.full_spectrum_window.update_content(self)
+
+    def on_multi_peak_checkbox_changed(self, state):
+        """Multi-Peak ROI 체크박스 상태 변경"""
+        if state == Qt.Checked:
+            self.show_multi_peak_window()
+        else:
+            self.hide_multi_peak_window()
+
+    def show_multi_peak_window(self):
+        """창5 표시"""
+        if not hasattr(self, 'multi_peak_window') or self.multi_peak_window is None:
+            self.multi_peak_window = MultiPeakROIDetailWindow(self)
+            self.multi_peak_window.closed.connect(self.on_multi_peak_window_closed)
+
+        self.update_multi_peak_window()
+        self.multi_peak_window.show()
+        self.multi_peak_window.raise_()
+
+    def hide_multi_peak_window(self):
+        """창5 숨김"""
+        if hasattr(self, 'multi_peak_window') and self.multi_peak_window is not None:
+            self.multi_peak_window.hide()
+
+    def on_multi_peak_window_closed(self):
+        """창5 닫힘 시 체크박스 해제"""
+        self.multi_peak_checkbox.setChecked(False)
+
+    def update_multi_peak_window(self):
+        """창5 내용 업데이트"""
+        if not hasattr(self, 'multi_peak_window') or self.multi_peak_window is None:
+            return
+        if not self.multi_peak_window.isVisible():
+            return
+        if self.data is None:
+            return
+
+        self.multi_peak_window.update_content(self)
 
 
 def main():
