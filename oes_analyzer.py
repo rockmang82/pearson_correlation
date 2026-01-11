@@ -21,6 +21,8 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPalette, QColor, QCursor, QDoubleValidator
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from matplotlib.offsetbox import AnchoredText, DrawingArea, TextArea, VPacker, AnchoredOffsetbox, DraggableOffsetBox
+from matplotlib.patches import FancyBboxPatch
 import matplotlib.pyplot as plt
 
 # 한글 폰트 설정 (Windows: 맑은 고딕)
@@ -1937,30 +1939,30 @@ class OESAnalyzer(QMainWindow):
         if self.data is None:
             return
 
-        # ===== Figure 전체 초기화 (버그 수정 핵심) =====
         self.figure_b.clear()
         self.ax_timeseries = self.figure_b.add_subplot(111)
 
         # 줌 히스토리 초기화
         self.zoom_history_b.clear()
 
-        # 이중 Y축 생성 (매번 새로 생성)
+        # 이중 Y축 생성 (Correlation Score용)
         ax_corr = self.ax_timeseries.twinx()
 
         run_times = self.data.iloc[:, 1].values
         selected_wavelengths = self.get_selected_wavelengths()
 
-        # Reference 및 현재 스펙트럼 가져오기
         ref_spectrum = self.get_spectrum_at_time(self.reference_time)
         current_spectrum = self.get_spectrum_at_time(self.current_time)
 
         half_window = self.correlation_window / 2.0
 
-        # Correlation Score 텍스트 객체 리스트
-        texts = []
+        # ===== 파장별 시계열 데이터 플롯 (좌측 Y축) =====
+        colors = ['tab:blue', 'tab:orange']
+        plot_handles = []  # 범례용 핸들
 
-        # 파장별 시계열 데이터 플롯 (좌측 Y축)
-        colors = ['tab:blue', 'tab:orange']  # 2개만
+        # 현재 시점 r값 저장 (오른쪽 하단 박스용)
+        current_r_values = {}
+
         for i, wl in enumerate(selected_wavelengths):
             intensities = []
             for _, row in self.data.iterrows():
@@ -1969,29 +1971,36 @@ class OESAnalyzer(QMainWindow):
                 intensities.append(intensity)
 
             color = colors[i % len(colors)]
-            self.ax_timeseries.plot(
+            line, = self.ax_timeseries.plot(
                 run_times, intensities,
                 label=f"{wl:.1f} nm",
                 color=color, linewidth=1.5
             )
+            plot_handles.append(line)
 
-            # 파장별 Correlation Score 텍스트 표시
+            # 파장별 Correlation Score 계산 (텍스트 표시는 제거, 값만 저장)
             if ref_spectrum is not None and current_spectrum is not None:
                 r_value = self.calculate_correlation_single_wavelength(
                     ref_spectrum, current_spectrum, wl
                 )
-                current_intensity = self.get_intensity_at_wavelength(current_spectrum, wl)
+                # λ1, λ2 레이블로 저장
+                current_r_values[f'λ{i+1}'] = r_value
 
-                txt = self.ax_timeseries.text(
-                    self.current_time, current_intensity,
-                    f'r={r_value:.3f}',
-                    fontsize=10,
-                    fontweight='bold',
-                    color=color,
-                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
-                              edgecolor=color, alpha=0.8)
-                )
-                texts.append(txt)
+        # ===== 현재 시간 수직선 =====
+        current_vline = self.ax_timeseries.axvline(
+            x=self.current_time,
+            color='#FF0000', linestyle='--', linewidth=1.5,
+            label='Current Time'
+        )
+        plot_handles.append(current_vline)
+
+        # ===== Reference 시간 수직선 =====
+        ref_vline = self.ax_timeseries.axvline(
+            x=self.reference_time,
+            color='#555555', linestyle='--', linewidth=1.5,
+            alpha=1.0, label='Reference Time'
+        )
+        plot_handles.append(ref_vline)
 
         # ===== Full Spectrum Correlation 시계열 =====
         if ref_spectrum is not None:
@@ -2002,15 +2011,19 @@ class OESAnalyzer(QMainWindow):
                 r_full = self.calculate_full_spectrum_correlation(ref_spectrum, t_spectrum)
                 full_spectrum_correlations.append(r_full)
 
-            # 우측 보조축에 Full Spectrum Correlation 플롯
-            ax_corr.plot(
+            full_line, = ax_corr.plot(
                 run_times, full_spectrum_correlations,
                 color='#AAAAAA',
                 linewidth=1.5,
                 label='Full Spectrum r'
             )
+            plot_handles.append(full_line)
 
-        # ===== Multi-Peak ROI Correlation 시계열 (새로 추가) =====
+            # Full Spectrum r 값 저장
+            current_full_r = self.calculate_full_spectrum_correlation(ref_spectrum, current_spectrum)
+            current_r_values['Full Spectrum'] = current_full_r
+
+        # ===== Multi-Peak ROI Correlation 시계열 =====
         if ref_spectrum is not None and len(selected_wavelengths) >= 2:
             multi_peak_correlations = []
 
@@ -2019,68 +2032,185 @@ class OESAnalyzer(QMainWindow):
                 r_mp, _ = self.calculate_multi_peak_roi_correlation(ref_spectrum, t_spectrum)
                 multi_peak_correlations.append(r_mp)
 
-            # 보라색 시계열 라인
-            ax_corr.plot(
+            mp_line, = ax_corr.plot(
                 run_times, multi_peak_correlations,
-                color='#9467BD',  # 보라색
+                color='#9467BD',
                 linewidth=1.5,
                 label='Multi-Peak ROI r'
             )
+            plot_handles.append(mp_line)
 
-            # Current Time에서의 값 텍스트 표시 (그래프 중앙)
+            # Multi-Peak ROI r 값 저장
             current_mp_r, _ = self.calculate_multi_peak_roi_correlation(ref_spectrum, current_spectrum)
+            current_r_values['Multi-Peak ROI'] = current_mp_r
 
-            # Y축 범위의 중앙 계산
-            ylim = self.ax_timeseries.get_ylim()
-            y_center = (ylim[0] + ylim[1]) / 2
+        # ===== 좌측 상단 범례 (모든 항목 병합) =====
+        # 범례 핸들과 레이블 수집
+        handles = plot_handles
+        labels = [h.get_label() for h in handles]
 
-            self.ax_timeseries.text(
-                self.current_time, y_center,
-                f'MP-ROI r={current_mp_r:.3f}',
-                fontsize=10,
-                fontweight='bold',
-                color='#9467BD',
-                bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
-                          edgecolor='#9467BD', alpha=0.8)
-            )
-
-        # 현재 시간 수직선
-        self.ax_timeseries.axvline(
-            x=self.current_time,
-            color='#FF0000', linestyle='--', linewidth=1.5,
-            label='Current Time'
+        self.ax_timeseries.legend(
+            handles, labels,
+            loc='upper left',
+            fontsize=8,
+            framealpha=0.9,
+            edgecolor='black'
         )
 
-        # Reference 시간 수직선
-        self.ax_timeseries.axvline(
-            x=self.reference_time,
-            color='#555555', linestyle='--', linewidth=1.5,
-            alpha=1.0, label='Reference Time'
-        )
+        # ===== 오른쪽 하단 드래그 가능한 정보 박스 =====
+        self._create_draggable_info_box(current_r_values, selected_wavelengths)
 
-        # adjustText로 텍스트 겹침 조정
-        if ADJUSTTEXT_AVAILABLE and texts:
-            adjust_text(
-                texts,
-                ax=self.ax_timeseries,
-                arrowprops=dict(arrowstyle='-', color='gray', lw=0.5),
-                expand_points=(1.5, 1.5),
-                force_points=(0.5, 0.5)
-            )
-
-        # 좌측 축 설정
+        # ===== 축 설정 =====
         self.ax_timeseries.set_xlabel("Run Time (sec)")
         self.ax_timeseries.set_ylabel("Intensity (a.u.)")
         self.ax_timeseries.set_title(f"Time Series & Correlation (Window: ±{half_window:.1f}nm)")
         self.ax_timeseries.grid(True, linestyle='--', alpha=0.3, color='lightgray')
-        self.ax_timeseries.legend(loc='upper left')
 
-        # 우측 Y축 설정
+        # 우측 Y축 설정 (범례 제거 - 좌측에 병합됨)
         ax_corr.set_ylabel("Correlation (r)")
         ax_corr.set_ylim(-1.0, 1.0)
-        ax_corr.legend(loc='upper right')
 
         self.canvas_b.draw()
+
+    def _create_draggable_info_box(self, r_values, selected_wavelengths):
+        """
+        오른쪽 하단에 드래그 가능한 Correlation 정보 박스 생성
+
+        Parameters:
+        - r_values: dict, 각 항목별 r값 {'Full Spectrum': 0.99, 'λ1': 1.0, ...}
+        - selected_wavelengths: list, 선택된 파장 리스트
+        """
+        if not r_values:
+            return
+
+        # 표시할 텍스트 생성 (세로 나열, 선택된 항목만)
+        text_lines = []
+        text_colors = []
+
+        # Full Spectrum r (항상 표시)
+        if 'Full Spectrum' in r_values:
+            text_lines.append(f"Full Spectrum r = {r_values['Full Spectrum']:.3f}")
+            text_colors.append('#AAAAAA')
+
+        # Single Peak r (선택된 파장만)
+        for i, wl in enumerate(selected_wavelengths):
+            key = f'λ{i+1}'
+            if key in r_values:
+                text_lines.append(f"λ{i+1} r = {r_values[key]:.3f}")
+                text_colors.append(['tab:blue', 'tab:orange'][i % 2])
+
+        # Multi-Peak ROI r (2개 파장 선택 시에만)
+        if 'Multi-Peak ROI' in r_values and len(selected_wavelengths) >= 2:
+            text_lines.append(f"Multi-Peak ROI r = {r_values['Multi-Peak ROI']:.3f}")
+            text_colors.append('#9467BD')
+
+        if not text_lines:
+            return
+
+        # TextArea 객체들 생성 (각 줄별로 색상 적용)
+        text_areas = []
+        for line, color in zip(text_lines, text_colors):
+            ta = TextArea(line, textprops=dict(
+                fontsize=8,
+                fontweight='normal',
+                color=color,
+                fontfamily='monospace'
+            ))
+            text_areas.append(ta)
+
+        # VPacker로 세로 정렬
+        vpacker = VPacker(
+            children=text_areas,
+            align='left',
+            pad=3,
+            sep=2
+        )
+
+        # 기본 위치 (우측 하단)
+        box_x = 0.98
+        box_y = 0.02
+
+        # AnchoredOffsetbox로 박스 생성
+        anchored_box = AnchoredOffsetbox(
+            loc='lower right',
+            child=vpacker,
+            pad=0.3,
+            borderpad=0.5,
+            frameon=True,
+            bbox_to_anchor=(box_x, box_y),
+            bbox_transform=self.ax_timeseries.transAxes,
+            prop=dict(size=8)
+        )
+
+        # 박스 스타일 설정 (Matplotlib 기본 범례 스타일)
+        anchored_box.patch.set_boxstyle("round,pad=0.3")
+        anchored_box.patch.set_facecolor('white')
+        anchored_box.patch.set_edgecolor('black')
+        anchored_box.patch.set_alpha(0.9)
+        anchored_box.patch.set_linewidth(0.5)
+
+        # axes에 추가
+        self.ax_timeseries.add_artist(anchored_box)
+
+        # 드래그 가능하게 설정
+        self._make_draggable(anchored_box)
+
+    def _make_draggable(self, artist):
+        """
+        AnchoredOffsetbox를 드래그 가능하게 만듦
+        커스텀 이벤트 핸들링 사용
+        """
+        class DraggableBox:
+            def __init__(self, artist, canvas):
+                self.artist = artist
+                self.canvas = canvas
+                self.press = None
+                self.background = None
+
+                self.cidpress = canvas.mpl_connect('button_press_event', self.on_press)
+                self.cidrelease = canvas.mpl_connect('button_release_event', self.on_release)
+                self.cidmotion = canvas.mpl_connect('motion_notify_event', self.on_motion)
+
+            def on_press(self, event):
+                if event.inaxes != self.artist.axes:
+                    return
+                contains, _ = self.artist.contains(event)
+                if not contains:
+                    return
+                self.press = (event.xdata, event.ydata)
+
+            def on_motion(self, event):
+                if self.press is None:
+                    return
+                if event.inaxes != self.artist.axes:
+                    return
+                if event.xdata is None or event.ydata is None:
+                    return
+
+                # 새 위치 계산 (axes 좌표로 변환)
+                inv = self.artist.axes.transAxes.inverted()
+                new_pos = inv.transform((event.x, event.y))
+
+                # bbox_to_anchor 업데이트
+                self.artist.set_bbox_to_anchor(new_pos, self.artist.axes.transAxes)
+                self.canvas.draw_idle()
+
+            def on_release(self, event):
+                self.press = None
+                self.canvas.draw_idle()
+
+            def disconnect(self):
+                self.canvas.mpl_disconnect(self.cidpress)
+                self.canvas.mpl_disconnect(self.cidrelease)
+                self.canvas.mpl_disconnect(self.cidmotion)
+
+        try:
+            # 먼저 내장 DraggableOffsetBox 시도
+            draggable = DraggableOffsetBox(artist)
+            draggable.connect()
+        except:
+            # 실패 시 커스텀 구현 사용
+            DraggableBox(artist, self.canvas_b)
 
     def on_time_changed(self):
         """시간 SpinBox Enter 입력 핸들러"""
