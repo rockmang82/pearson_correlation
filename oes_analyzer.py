@@ -2049,13 +2049,18 @@ class OESAnalyzer(QMainWindow):
         handles = plot_handles
         labels = [h.get_label() for h in handles]
 
-        self.ax_timeseries.legend(
+        # ===== 좌측 상단 범례 (드래그 가능) =====
+        legend = self.ax_timeseries.legend(
             handles, labels,
             loc='upper left',
-            fontsize=8,
+            fontsize=10,  # 8pt → 10pt
             framealpha=0.9,
-            edgecolor='black'
+            edgecolor='black',
+            fancybox=True,  # 둥근 모서리
+            frameon=True,
+            facecolor='white'  # 흰색 배경
         )
+        legend.set_draggable(True)  # 드래그 가능하게 설정
 
         # ===== 오른쪽 하단 드래그 가능한 정보 박스 =====
         self._create_draggable_info_box(current_r_values, selected_wavelengths)
@@ -2085,132 +2090,127 @@ class OESAnalyzer(QMainWindow):
 
         # 표시할 텍스트 생성 (세로 나열, 선택된 항목만)
         text_lines = []
-        text_colors = []
 
         # Full Spectrum r (항상 표시)
         if 'Full Spectrum' in r_values:
             text_lines.append(f"Full Spectrum r = {r_values['Full Spectrum']:.3f}")
-            text_colors.append('#AAAAAA')
 
         # Single Peak r (선택된 파장만)
         for i, wl in enumerate(selected_wavelengths):
             key = f'λ{i+1}'
             if key in r_values:
                 text_lines.append(f"λ{i+1} r = {r_values[key]:.3f}")
-                text_colors.append(['tab:blue', 'tab:orange'][i % 2])
 
         # Multi-Peak ROI r (2개 파장 선택 시에만)
         if 'Multi-Peak ROI' in r_values and len(selected_wavelengths) >= 2:
             text_lines.append(f"Multi-Peak ROI r = {r_values['Multi-Peak ROI']:.3f}")
-            text_colors.append('#9467BD')
 
         if not text_lines:
             return
 
-        # TextArea 객체들 생성 (각 줄별로 색상 적용)
-        text_areas = []
-        for line, color in zip(text_lines, text_colors):
-            ta = TextArea(line, textprops=dict(
-                fontsize=8,
-                fontweight='normal',
-                color=color,
-                fontfamily='monospace'
-            ))
-            text_areas.append(ta)
+        # 텍스트 박스 내용 생성 (줄바꿈으로 연결)
+        box_text = '\n'.join(text_lines)
 
-        # VPacker로 세로 정렬
-        vpacker = VPacker(
-            children=text_areas,
-            align='left',
-            pad=3,
-            sep=2
+        # AnchoredText 사용 (드래그 가능)
+        from matplotlib.offsetbox import AnchoredText
+
+        # 스타일 설정 (Legend와 동일: 흰색 배경, 검은 테두리, 둥근 모서리)
+        props = dict(
+            boxstyle='round,pad=0.5',
+            facecolor='white',
+            edgecolor='black',
+            alpha=0.9
         )
 
-        # 기본 위치 (우측 하단)
-        box_x = 0.98
-        box_y = 0.02
-
-        # AnchoredOffsetbox로 박스 생성
-        anchored_box = AnchoredOffsetbox(
+        # AnchoredText 생성
+        anchored_text = AnchoredText(
+            box_text,
             loc='lower right',
-            child=vpacker,
-            pad=0.3,
-            borderpad=0.5,
+            prop=dict(
+                fontsize=10,  # 10pt (Legend와 동일)
+                fontfamily='monospace'
+            ),
             frameon=True,
-            bbox_to_anchor=(box_x, box_y),
-            bbox_transform=self.ax_timeseries.transAxes,
-            prop=dict(size=8)
+            bbox_to_anchor=(0.98, 0.02),
+            bbox_transform=self.ax_timeseries.transAxes
         )
 
-        # 박스 스타일 설정 (Matplotlib 기본 범례 스타일)
-        anchored_box.patch.set_boxstyle("round,pad=0.3")
-        anchored_box.patch.set_facecolor('white')
-        anchored_box.patch.set_edgecolor('black')
-        anchored_box.patch.set_alpha(0.9)
-        anchored_box.patch.set_linewidth(0.5)
+        # 박스 스타일 적용
+        anchored_text.patch.set_boxstyle("round,pad=0.5")
+        anchored_text.patch.set_facecolor('white')
+        anchored_text.patch.set_edgecolor('black')
+        anchored_text.patch.set_alpha(0.9)
 
         # axes에 추가
-        self.ax_timeseries.add_artist(anchored_box)
+        self.ax_timeseries.add_artist(anchored_text)
 
-        # 드래그 가능하게 설정
-        self._make_draggable(anchored_box)
+        # 드래그 가능하게 설정 (커스텀 구현)
+        self._setup_stats_box_drag(anchored_text)
 
-    def _make_draggable(self, artist):
+    def _setup_stats_box_drag(self, artist):
         """
-        AnchoredOffsetbox를 드래그 가능하게 만듦
-        커스텀 이벤트 핸들링 사용
+        Stats Box를 드래그 가능하게 설정
+        커스텀 이벤트 핸들링 구현
         """
-        class DraggableBox:
-            def __init__(self, artist, canvas):
+        class DraggableStatsBox:
+            def __init__(self, artist, ax, canvas):
                 self.artist = artist
+                self.ax = ax
                 self.canvas = canvas
                 self.press = None
-                self.background = None
+                self.start_pos = None
 
+                # 이벤트 연결
                 self.cidpress = canvas.mpl_connect('button_press_event', self.on_press)
                 self.cidrelease = canvas.mpl_connect('button_release_event', self.on_release)
                 self.cidmotion = canvas.mpl_connect('motion_notify_event', self.on_motion)
 
             def on_press(self, event):
-                if event.inaxes != self.artist.axes:
+                """마우스 버튼 누름"""
+                if event.inaxes != self.ax:
                     return
+
+                # artist 영역 내 클릭인지 확인
                 contains, _ = self.artist.contains(event)
                 if not contains:
                     return
-                self.press = (event.xdata, event.ydata)
+
+                # 시작 위치 저장
+                self.press = True
+
+                # 현재 위치를 axes 좌표로 저장
+                inv = self.ax.transAxes.inverted()
+                self.start_pos = inv.transform((event.x, event.y))
 
             def on_motion(self, event):
-                if self.press is None:
+                """마우스 이동"""
+                if self.press is None or not self.press:
                     return
-                if event.inaxes != self.artist.axes:
+                if event.inaxes != self.ax:
                     return
-                if event.xdata is None or event.ydata is None:
+                if event.x is None or event.y is None:
                     return
 
-                # 새 위치 계산 (axes 좌표로 변환)
-                inv = self.artist.axes.transAxes.inverted()
+                # 새 위치 계산 (axes 좌표)
+                inv = self.ax.transAxes.inverted()
                 new_pos = inv.transform((event.x, event.y))
 
                 # bbox_to_anchor 업데이트
-                self.artist.set_bbox_to_anchor(new_pos, self.artist.axes.transAxes)
+                # 박스의 위치를 새 좌표로 설정
+                self.artist.set_bbox_to_anchor(
+                    (new_pos[0], new_pos[1]),
+                    self.ax.transAxes
+                )
+
                 self.canvas.draw_idle()
 
             def on_release(self, event):
+                """마우스 버튼 릴리즈"""
                 self.press = None
                 self.canvas.draw_idle()
 
-            def disconnect(self):
-                self.canvas.mpl_disconnect(self.cidpress)
-                self.canvas.mpl_disconnect(self.cidrelease)
-                self.canvas.mpl_disconnect(self.cidmotion)
-
-        try:
-            # 먼저 내장 DraggableOffsetBox 시도
-            draggable = DraggableOffsetBox(artist)
-            draggable.connect()
-        except:
-            # 실패 시 커스텀 구현 사용
-            DraggableBox(artist, self.canvas_b)
+        # 드래그 객체 생성 및 연결
+        DraggableStatsBox(artist, self.ax_timeseries, self.canvas_b)
 
     def on_time_changed(self):
         """시간 SpinBox Enter 입력 핸들러"""
