@@ -155,7 +155,7 @@ class CorrelationDetailWindow(QWidget):
 
         # 체크된 파장 정보 수집
         wavelengths_info = []
-        for i in range(3):
+        for i in range(len(parent.wavelength_checkboxes)):
             if parent.wavelength_checkboxes[i].isChecked():
                 try:
                     wl = float(parent.wavelength_inputs[i].text())
